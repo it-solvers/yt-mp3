@@ -18,6 +18,8 @@ pub enum Icon {
     Folder,
     Download,
     Speaker,
+    // 프로그램 정보
+    Info,
     // 소리 파일 표시
     Music,
     // 동영상 파일 표시
@@ -284,6 +286,17 @@ fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32, background: 
                 wave.iter().map(|&(x, y)| at(x, y)).collect(),
                 Stroke::new(rect.width() * 0.13, color),
             ));
+        }
+        Icon::Info => {
+            // 원 안의 i
+            let width = rect.width() * 0.13;
+            painter.circle_stroke(
+                rect.center(),
+                rect.width() * 0.50,
+                Stroke::new(width, color),
+            );
+            painter.circle_filled(at(0.50, 0.27), rect.width() * 0.10, color);
+            block(0.42, 0.43, 0.58, 0.78, 1);
         }
         Icon::Music => {
             // 두 음표를 잇는 막대, 기둥, 머리

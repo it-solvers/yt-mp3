@@ -25,8 +25,7 @@ fn main() -> eframe::Result {
     lang::set_korean(lang::system_is_korean());
 
     // 창과 Dock에 보일 아이콘. 지정하지 않으면 eframe 기본 아이콘이 쓰임
-    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
-        .expect("프로그램에 포함한 아이콘은 올바른 PNG");
+    let icon = app_icon();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -51,11 +50,17 @@ fn main() -> eframe::Result {
     )
 }
 
+// 프로그램에 포함한 앱 아이콘
+fn app_icon() -> egui::IconData {
+    eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
+        .expect("프로그램에 포함한 아이콘은 올바른 PNG")
+}
+
 fn app_name() -> String {
     tr!("걍담아", "JustGrab")
 }
 
-// 화면 하단에 보여줄 저작권 정보
+// 정보창에 보여줄 저작권 정보
 fn copyright() -> String {
     tr!(
         "© 2026 아이티해결단(이혁). All rights reserved.",
@@ -113,6 +118,8 @@ struct App {
     auto_next: bool,
     // 다운로드할 때 저장할 형식
     format: Format,
+    // 정보창에 보여줄 앱 아이콘. 처음 열 때 만듦
+    icon_texture: Option<egui::TextureHandle>,
     // 사용자가 언어를 직접 골랐는지. 고르지 않았으면 시스템 언어를 계속 따름
     language_chosen: bool,
 }
@@ -198,6 +205,7 @@ impl App {
             auto_next,
             format,
             language_chosen,
+            icon_texture: None,
         };
         app.refresh_files();
         app
@@ -207,6 +215,13 @@ impl App {
     fn title_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(app_name()).heading().strong());
+
+            // 정보 버튼: 누르면 열리고, 바깥을 누르면 닫힘
+            let info = icons::button(ui, Icon::Info, tr!("프로그램 정보", "About"));
+            let frame = popup_frame(ui);
+            egui::Popup::from_toggle_button_response(&info)
+                .frame(frame)
+                .show(|ui| self.about(ui));
 
             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
             ui.with_layout(right_to_left, |ui| {
@@ -219,6 +234,42 @@ impl App {
                     self.set_language(ui.ctx(), true);
                 }
             });
+        });
+    }
+
+    // 프로그램 정보: 아이콘, 이름, version, 저작권, 오픈소스 license
+    fn about(&mut self, ui: &mut egui::Ui) {
+        ui.set_width(260.0);
+        let texture = self.icon_texture.get_or_insert_with(|| {
+            let icon = app_icon();
+            let size = [icon.width as usize, icon.height as usize];
+            let image = egui::ColorImage::from_rgba_unmultiplied(size, &icon.rgba);
+            // 크게 만든 그림을 작게 보여줘도 거칠지 않게 mipmap 사용
+            let options = egui::TextureOptions {
+                mipmap_mode: Some(egui::TextureFilter::Linear),
+                ..egui::TextureOptions::LINEAR
+            };
+            ui.ctx().load_texture("app-icon", image, options)
+        });
+        let icon_id = texture.id();
+
+        ui.vertical_centered(|ui| {
+            ui.add(egui::Image::new((icon_id, egui::Vec2::splat(64.0))));
+            let strong = ui.visuals().strong_text_color();
+            ui.label(
+                egui::RichText::new(app_name())
+                    .heading()
+                    .strong()
+                    .color(strong),
+            );
+            ui.label(egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).weak());
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(copyright()).size(11.0).color(strong));
+            ui.separator();
+            let licenses = tr!("오픈소스 라이선스", "Open source licenses");
+            if ui.link(licenses).clicked() {
+                self.open_licenses();
+            }
         });
     }
 
@@ -481,12 +532,7 @@ impl App {
             let sites = tr!("지원 사이트", "Supported sites");
             let link = ui.link(egui::RichText::new(sites).size(11.0));
 
-            // 뒤의 화면과 구별되도록 강조색 테두리와 조금 밝은 바탕 사용
-            let colors = theme::palette(ui);
-            let frame = egui::Frame::popup(ui.style())
-                .fill(colors.shade(0.08))
-                .stroke(egui::Stroke::new(2.0, colors.point))
-                .inner_margin(14);
+            let frame = popup_frame(ui);
             egui::Popup::from_toggle_button_response(&link)
                 .frame(frame)
                 .show(supported_sites);
@@ -763,24 +809,6 @@ impl eframe::App for App {
         // 아래쪽 영역은 나중에 배치한 것이 위에 놓임.
         // 남은 공간을 쓰는 CentralPanel보다 먼저 배치해야 함
 
-        // 맨 아래: 저작권 정보와 license 링크
-        let frame = edge_frame(ui);
-        egui::Panel::bottom("copyright")
-            .frame(frame)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(copyright()).size(11.0).weak());
-
-                    let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
-                    ui.with_layout(right_to_left, |ui| {
-                        let licenses = tr!("오픈소스 라이선스", "Open source licenses");
-                        if ui.link(egui::RichText::new(licenses).size(11.0)).clicked() {
-                            self.open_licenses();
-                        }
-                    });
-                });
-            });
-
         // 재생 중일 때만 보이는 재생 bar
         if self.playing.is_some() {
             egui::Panel::bottom("player")
@@ -1000,9 +1028,18 @@ fn tool_path() -> OsString {
     std::env::join_paths(folders).unwrap_or(current)
 }
 
-// 헤더, 재생 bar, 푸터의 틀. 본문과 구별되는 바탕색 사용
+// 헤더와 재생 bar의 틀. 본문과 구별되는 바탕색 사용
 fn edge_frame(ui: &egui::Ui) -> egui::Frame {
     egui::Frame::side_top_panel(ui.style()).fill(theme::palette(ui).edge)
+}
+
+// 안내창의 틀. 뒤의 화면과 구별되도록 강조색 테두리와 조금 밝은 바탕 사용
+fn popup_frame(ui: &egui::Ui) -> egui::Frame {
+    let colors = theme::palette(ui);
+    egui::Frame::popup(ui.style())
+        .fill(colors.shade(0.08))
+        .stroke(egui::Stroke::new(2.0, colors.point))
+        .inner_margin(14)
 }
 
 // radio와 checkbox의 선택 표시는 강조색, 글자는 원래 색

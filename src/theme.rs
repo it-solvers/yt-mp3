@@ -13,7 +13,7 @@ pub struct Palette {
     pub point: Color32,
     // 강조색 위에 올리는 글자
     pub on_point: Color32,
-    // 헤더, 재생 bar, 푸터의 바탕. 바탕색보다 한 단계 구별되는 색
+    // 헤더와 재생 bar의 바탕. 바탕색보다 한 단계 구별되는 색
     pub edge: Color32,
 }
 
