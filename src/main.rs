@@ -397,13 +397,22 @@ impl App {
                 }
                 icons::picture(ui, Icon::Speaker, tr!("음량", "Volume"));
 
-                if let Some(playing) = &self.playing {
-                    let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
-                    ui.with_layout(left_to_right, |ui| {
-                        let name = egui::RichText::new(file_name(&playing.path)).strong();
-                        ui.add(egui::Label::new(name).truncate());
-                    });
-                }
+                // 남은 공간에 곡 이름을 흘려 보내고, 곡이 없으면 안내 보여주기
+                let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
+                ui.with_layout(left_to_right, |ui| match &self.playing {
+                    Some(playing) => {
+                        // 재생 위치에 맞춰 움직이므로 일시정지하면 함께 멈춤
+                        marquee(ui, &file_name(&playing.path), playing.player.get_pos());
+                        if !playing.player.is_paused() {
+                            // 부드럽게 흐르도록 자주 다시 그리기
+                            ui.ctx().request_repaint_after(Duration::from_millis(33));
+                        }
+                    }
+                    None => {
+                        let hint = tr!("재생할 곡을 선택하세요", "Select a track to play");
+                        ui.add(egui::Label::new(egui::RichText::new(hint).weak()).truncate());
+                    }
+                });
             });
         });
 
@@ -1230,6 +1239,33 @@ fn next_file(files: &[PathBuf], current: &Path) -> Option<PathBuf> {
         .iter()
         .find(|path| !is_video(path))
         .cloned()
+}
+
+// 옛날 MP3 플레이어처럼 글자를 왼쪽으로 반복해서 흘려 보내기.
+// elapsed는 흐르기 시작한 뒤 지난 시간
+fn marquee(ui: &mut egui::Ui, text: &str, elapsed: Duration) {
+    // 1초에 움직이는 거리와, 글자가 다시 나오기까지의 간격
+    const SPEED: f32 = 40.0;
+    const GAP: f32 = 60.0;
+
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let color = ui.visuals().strong_text_color();
+    let galley = ui.painter().layout_no_wrap(text.to_string(), font, color);
+
+    let size = egui::vec2(ui.available_width(), galley.size().y);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    // 짧은 제목은 화면에서 다 빠져나간 뒤에 다시 나오게 하기
+    let period = (galley.size().x + GAP).max(rect.width());
+    let offset = (elapsed.as_secs_f32() * SPEED) % period;
+
+    // 영역 밖으로 나간 부분은 잘라내기
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    for start in [rect.left() - offset, rect.left() - offset + period] {
+        painter.galley(egui::pos2(start, rect.top()), galley.clone(), color);
+    }
+
+    // 마우스를 올리면 전체 제목 보여주기
+    response.on_hover_text(text);
 }
 
 // 시간을 "분:초" 모양으로 바꾸기
