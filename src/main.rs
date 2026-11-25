@@ -41,6 +41,8 @@ struct App {
     url: String,
     folder: PathBuf,
     status: String,
+    // 화면 하단에 보여줄 삭제 결과
+    notice: String,
     // 다운로드 중이면 Some, 아니면 None
     job: Option<Job>,
     // 저장 폴더에 있는 mp3 목록
@@ -103,6 +105,7 @@ impl App {
             folder,
             // 보여줄 안내가 생기기 전까지는 비워 두기
             status: String::new(),
+            notice: String::new(),
             job: None,
             files: Vec::new(),
             playing: None,
@@ -248,7 +251,7 @@ impl App {
             self.playing = None;
         }
 
-        self.status = match move_to_trash(&path) {
+        self.notice = match move_to_trash(&path) {
             Ok(()) => format!("휴지통으로 옮겼어요: {name}"),
             Err(e) => format!("오류: 삭제할 수 없어요: {e}"),
         };
@@ -327,6 +330,7 @@ impl App {
             progress: None,
         });
         self.status = String::from("다운로드 준비 중...");
+        self.notice.clear();
     }
 
     // 다운로드 thread가 보낸 소식 확인하기 (기다리지 않음)
@@ -383,8 +387,13 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let idle = self.job.is_none();
 
-        // 화면 하단의 저작권 정보. 남은 공간을 쓰는 CentralPanel보다 먼저 배치
-        egui::Panel::bottom("copyright").show(ui, |ui| {
+        // 화면 하단의 삭제 결과와 저작권 정보.
+        // 남은 공간을 쓰는 CentralPanel보다 먼저 배치
+        egui::Panel::bottom("footer").show(ui, |ui| {
+            if !self.notice.is_empty() {
+                // 파일 이름이 길면 한 줄에 맞게 줄이기
+                ui.add(egui::Label::new(&self.notice).truncate());
+            }
             ui.vertical_centered(|ui| {
                 ui.label(egui::RichText::new(COPYRIGHT).size(11.0).weak());
             });
