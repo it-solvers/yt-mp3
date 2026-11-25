@@ -270,6 +270,8 @@ impl App {
         // 목록을 그리는 동안에는 클릭한 파일만 기억하고, 재생과 삭제는 그린 뒤에 하기
         let mut clicked = None;
         let mut to_delete = None;
+        // 기본 스크롤 bar는 평소에 숨어 있으므로, 목록이 넘치면 항상 보이는 모양 사용
+        ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
