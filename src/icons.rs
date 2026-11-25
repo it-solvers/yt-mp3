@@ -1,10 +1,10 @@
 // 직접 그리는 아이콘.
-// 기능마다 다른 색을 채운 둥근 사각형에 흰색 그림을 올림.
+// 색은 청록 하나만 강조에 쓰고 나머지는 회색. 삭제는 마우스를 올렸을 때만 빨간색.
 // 이미지 파일 없이 도형으로 그려서 어떤 크기에서도 선명함
 
 use eframe::egui::{
-    Color32, CornerRadius, Painter, Pos2, Rect, Response, Role, Sense, Shadow, Shape, Stroke, Ui,
-    Vec2, WidgetInfo, pos2, vec2,
+    Color32, CornerRadius, Painter, Pos2, Rect, Response, Role, Sense, Shape, Stroke, Ui, Vec2,
+    WidgetInfo, pos2, vec2,
 };
 
 #[derive(Clone, Copy)]
@@ -23,24 +23,10 @@ pub enum Icon {
     Video,
 }
 
-impl Icon {
-    // 아이콘의 배경색
-    pub fn color(self) -> Color32 {
-        let (r, g, b) = match self {
-            Icon::Play => (22, 160, 142),
-            Icon::Pause => (59, 130, 196),
-            Icon::Stop => (100, 116, 139),
-            Icon::Refresh => (47, 158, 99),
-            Icon::Trash => (217, 83, 79),
-            Icon::Folder => (224, 152, 46),
-            Icon::Download => (22, 128, 118),
-            Icon::Speaker => (91, 110, 225),
-            Icon::Music => (139, 92, 214),
-            Icon::Video => (214, 86, 143),
-        };
-        Color32::from_rgb(r, g, b)
-    }
-}
+// 강조색(청록색). 저장, 재생, 일시정지에 사용
+pub const ACCENT: Color32 = Color32::from_rgb(22, 128, 118);
+// 삭제 버튼에 마우스를 올렸을 때의 색
+const DANGER: Color32 = Color32::from_rgb(200, 70, 66);
 
 // 아이콘 하나가 들어가는 버튼. label은 마우스를 올렸을 때 보여줄 설명
 pub fn button(ui: &mut Ui, icon: Icon, label: String) -> Response {
@@ -48,15 +34,22 @@ pub fn button(ui: &mut Ui, icon: Icon, label: String) -> Response {
     describe(&response, ui, &label);
 
     if ui.is_rect_visible(rect) {
-        // 마우스를 올리면 밝고 약간 크게, 누르면 어둡게
-        let (fill, rect) = if response.is_pointer_button_down_on() {
-            (icon.color().gamma_multiply(0.8).to_opaque(), rect)
-        } else if response.hovered() {
-            (brighten(icon.color()), rect.expand(1.0))
-        } else {
-            (icon.color(), rect)
+        let (mut fill, mut glyph) = match icon {
+            // 주요 동작은 강조색
+            Icon::Play | Icon::Pause => (ACCENT, Color32::WHITE),
+            _ => neutral(ui),
         };
-        badge(ui.painter(), rect, icon, fill);
+        if response.hovered() {
+            (fill, glyph) = match icon {
+                Icon::Trash => (DANGER, Color32::WHITE),
+                _ => (brighten(fill), glyph),
+            };
+        }
+        if response.is_pointer_button_down_on() {
+            fill = fill.gamma_multiply(0.8).to_opaque();
+        }
+        ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
+        paint(ui.painter(), rect.shrink(7.0), icon, glyph, fill);
     }
 
     response.on_hover_text(label)
@@ -66,23 +59,32 @@ pub fn button(ui: &mut Ui, icon: Icon, label: String) -> Response {
 pub fn picture(ui: &mut Ui, icon: Icon, label: String) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
     if ui.is_rect_visible(rect) {
-        badge(ui.painter(), rect, icon, icon.color());
+        let weak = ui.visuals().weak_text_color();
+        match icon {
+            // 파일 종류는 옅은 청록 배경으로 표시
+            Icon::Music | Icon::Video => {
+                let accent = ui.visuals().hyperlink_color;
+                let tint = ui.visuals().panel_fill.lerp_to_gamma(accent, 0.18);
+                ui.painter().rect_filled(rect, CornerRadius::same(8), tint);
+                paint(ui.painter(), rect.shrink(7.0), icon, accent, tint);
+            }
+            // 나머지는 배경 없이 그려서 버튼과 구별
+            _ => {
+                let background = ui.visuals().panel_fill;
+                paint(ui.painter(), rect.shrink(6.0), icon, weak, background);
+            }
+        }
     }
     response.on_hover_text(label)
 }
 
-// 그림자가 있는 색 배경 위에 아이콘 그리기
-fn badge(painter: &Painter, rect: Rect, icon: Icon, fill: Color32) {
-    let radius = CornerRadius::same(9);
-    let shadow = Shadow {
-        offset: [0, 2],
-        blur: 6,
-        spread: 0,
-        color: Color32::from_black_alpha(60),
-    };
-    painter.add(shadow.as_shape(rect, radius));
-    painter.rect_filled(rect, radius, fill);
-    paint(painter, rect.shrink(7.0), icon, Color32::WHITE, fill);
+// 보조 버튼의 배경색과 그림색
+fn neutral(ui: &Ui) -> (Color32, Color32) {
+    if ui.visuals().dark_mode {
+        (Color32::from_gray(54), Color32::from_gray(215))
+    } else {
+        (Color32::from_gray(228), Color32::from_gray(70))
+    }
 }
 
 fn brighten(color: Color32) -> Color32 {
@@ -113,9 +115,9 @@ pub fn primary_button(ui: &mut Ui, icon: Icon, label: String, enabled: bool) -> 
         painter.multiply_opacity(0.4);
     }
     let fill = if response.hovered() && enabled {
-        brighten(icon.color())
+        brighten(ACCENT)
     } else {
-        icon.color()
+        ACCENT
     };
     painter.rect_filled(rect, CornerRadius::same(10), fill);
 

@@ -8,7 +8,7 @@ mod lang;
 mod icons;
 
 use eframe::egui;
-use icons::Icon;
+use icons::{ACCENT, Icon};
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -49,9 +49,6 @@ fn main() -> eframe::Result {
         }),
     )
 }
-
-// 강조색(청록색). 저장 버튼에 사용
-const ACCENT: egui::Color32 = egui::Color32::from_rgb(22, 128, 118);
 
 // 어두운 화면과 밝은 화면 모두에 청록색 강조색 적용
 fn apply_theme(ctx: &egui::Context) {
