@@ -39,44 +39,40 @@ def stroke(x, y, points, radius=22):
     return distance - radius
 
 
-def video(x, y):
-    """재생 삼각형과 필름 구멍이 있는 영상 화면."""
-    screen = rounded_box(x, y, 512, 304, 232, 136, 34)
-    holes = min(
-        rounded_box(x, y, cx, cy, 18, 18, 6)
-        for cx in (320, 704)
-        for cy in (222, 304, 386)
-    )
-    play = polygon(x, y, [(460, 230), (590, 304), (460, 378)])
-    # 화면에서 구멍과 삼각형 부분을 파내기
-    return max(screen, -holes, -play)
+def download_mark(x, y):
+    """받침대로 내려오는 화살표. 내려받기를 뜻함."""
+    shaft = rounded_box(x, y, 512, 220, 46, 62, 8)
+    head = polygon(x, y, [(396, 272), (628, 272), (512, 376)])
+    tray = stroke(x, y, [(318, 330), (318, 424), (706, 424), (706, 330)])
+    return min(shaft, head, tray)
 
 
-def arrow(x, y):
-    """영상에서 소리를 꺼낸다는 뜻의 아래 화살표."""
-    shaft = rounded_box(x, y, 512, 515, 36, 45, 6)
-    head = polygon(x, y, [(406, 545), (618, 545), (512, 635)])
-    return min(shaft, head)
+def letters_mp(x, y, top):
+    """"MP" 글자. top은 글자의 위쪽 위치, 글자 높이는 120."""
+    bottom = top + 120
+    m = [(254, bottom), (254, top), (332, top + 76), (410, top), (410, bottom)]
+    p = [(484, bottom), (484, top), (562, top), (596, top + 13), (604, top + 34),
+         (596, top + 55), (562, top + 68), (484, top + 68)]
+    return min(stroke(x, y, m), stroke(x, y, p))
 
 
-def label(x, y):
-    """"MP3" 글자."""
-    top, middle, bottom = 692, 758, 824
-    letters = [
-        # M
-        [(258, bottom), (258, top), (338, 774), (418, top), (418, bottom)],
-        # P
-        [(488, bottom), (488, top), (564, top), (596, 706), (604, 729),
-         (596, 752), (564, 766), (488, 766)],
-        # 3
-        [(670, top), (734, top), (764, 708), (764, 740), (734, middle), (696, middle)],
-        [(734, middle), (764, 776), (764, 808), (734, bottom), (670, bottom)],
-    ]
-    return min(stroke(x, y, points) for points in letters)
+def label_mp3(x, y, top=498):
+    middle, bottom = top + 60, top + 120
+    upper = [(674, top), (738, top), (768, top + 15), (768, top + 45),
+             (738, middle), (700, middle)]
+    lower = [(738, middle), (768, top + 75), (768, top + 105),
+             (738, bottom), (674, bottom)]
+    return min(letters_mp(x, y, top), stroke(x, y, upper), stroke(x, y, lower))
+
+
+def label_mp4(x, y, top=708):
+    slant = [(748, top), (662, top + 82), (780, top + 82)]
+    upright = [(748, top), (748, top + 120)]
+    return min(letters_mp(x, y, top), stroke(x, y, slant), stroke(x, y, upright))
 
 
 def symbol(x, y):
-    return min(video(x, y), arrow(x, y), label(x, y))
+    return min(download_mark(x, y), label_mp3(x, y), label_mp4(x, y))
 
 
 def coverage(distance):

@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 
 cargo build --release
 
-app="target/release/bundle/YouTube MP3.app"
+app="target/release/bundle/유투브내려받기.app"
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
 
 rm -rf "$app"
@@ -35,7 +35,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>YouTube MP3</string>
+    <string>유투브내려받기</string>
+    <key>CFBundleDisplayName</key>
+    <string>유투브내려받기</string>
     <key>CFBundleIdentifier</key>
     <string>local.yt-mp3</string>
     <key>CFBundleExecutable</key>

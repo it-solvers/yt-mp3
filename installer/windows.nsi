@@ -4,7 +4,9 @@
 Unicode true
 !include "MUI2.nsh"
 
-!define NAME "YouTube MP3"
+!define NAME "유투브내려받기"
+; 이름을 바꾸기 전의 값. 설치 폴더는 그대로 써서 이전 설치본을 덮어씀
+!define OLD_NAME "YouTube MP3"
 !define PUBLISHER "아이티해결단(이혁)"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\yt-mp3"
 
@@ -13,7 +15,7 @@ OutFile "${OUTFILE}"
 ; 관리자 권한 없이 사용자 폴더에 설치.
 ; yt-dlp를 나중에 업데이트할 수 있도록 쓰기 가능한 위치를 사용
 RequestExecutionLevel user
-InstallDir "$LOCALAPPDATA\Programs\${NAME}"
+InstallDir "$LOCALAPPDATA\Programs\${OLD_NAME}"
 SetCompressor /SOLID lzma
 
 !define MUI_ICON "${ICON}"
@@ -52,6 +54,10 @@ Section "Install"
     File "${STAGE}/yt-mp3.exe"
     File "/oname=icon.ico" "${ICON}"
     WriteUninstaller "$INSTDIR\uninstall.exe"
+
+    ; 이전 이름의 바로 가기 지우기
+    Delete "$SMPROGRAMS\${OLD_NAME}.lnk"
+    Delete "$DESKTOP\${OLD_NAME}.lnk"
 
     CreateShortcut "$SMPROGRAMS\${NAME}.lnk" "$INSTDIR\yt-mp3.exe" "" "$INSTDIR\icon.ico"
     CreateShortcut "$DESKTOP\${NAME}.lnk" "$INSTDIR\yt-mp3.exe" "" "$INSTDIR\icon.ico"
