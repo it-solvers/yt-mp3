@@ -92,14 +92,33 @@ fn copyright() -> String {
     )
 }
 
-// URL 입력창 아래에 보여줄 안내. 실제 지원 범위는 yt-dlp에 따라 달라짐
-fn supported_sites() -> String {
-    tr!(
-        "지원 사이트: YouTube, Instagram, TikTok, X, Facebook, Vimeo, SoundCloud 등\n\
-         YouTube 외에는 확인 전이며, 로그인이 필요하거나 비공개·DRM 콘텐츠는 받을 수 없어요",
-        "Sites: YouTube, Instagram, TikTok, X, Facebook, Vimeo, SoundCloud and more\n\
-         Only YouTube is tested. Login-only, private, or DRM content is not supported",
-    )
+// 지원 사이트 안내창의 내용. 실제 지원 범위는 yt-dlp에 따라 달라짐
+const SITES: &str = "YouTube, Instagram, TikTok, X, Facebook, Vimeo, SoundCloud";
+
+fn supported_sites(ui: &mut egui::Ui) {
+    ui.set_max_width(340.0);
+    let strong = ui.visuals().strong_text_color();
+
+    ui.label(
+        egui::RichText::new(tr!("지원 사이트", "Supported sites"))
+            .size(15.0)
+            .strong()
+            .color(ui.visuals().hyperlink_color),
+    );
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(tr!("{SITES} 등", "{SITES} and more")).color(strong));
+    ui.separator();
+    ui.label(
+        egui::RichText::new(tr!(
+            "• YouTube 외에는 확인 전이에요\n\
+             • 로그인이 필요한 콘텐츠는 받을 수 없어요\n\
+             • 비공개, DRM 콘텐츠는 받을 수 없어요",
+            "• Only YouTube is tested\n\
+             • Login-only content is not supported\n\
+             • Private or DRM content is not supported",
+        ))
+        .color(strong),
+    );
 }
 
 // 화면이 기억해야 하는 값들
@@ -458,14 +477,24 @@ impl App {
                 tr!("MP4 (동영상)", "MP4 (video)"),
             );
 
-            // 지원 사이트 안내: 마우스를 올리거나 누르면 보여주기
+            // 지원 사이트 안내: 누르면 열리고, 바깥을 누르면 닫힘
             let sites = tr!("지원 사이트", "Supported sites");
-            let link = ui
-                .link(egui::RichText::new(sites).size(11.0))
-                .on_hover_text(supported_sites());
-            egui::Popup::from_toggle_button_response(&link).show(|ui| {
-                ui.label(supported_sites());
-            });
+            let link = ui.link(egui::RichText::new(sites).size(11.0));
+
+            // 뒤의 화면과 구별되도록 강조색 테두리와 다른 배경색 사용
+            let visuals = ui.visuals();
+            let background = if visuals.dark_mode {
+                egui::Color32::from_rgb(38, 52, 52)
+            } else {
+                egui::Color32::WHITE
+            };
+            let frame = egui::Frame::popup(ui.style())
+                .fill(background)
+                .stroke(egui::Stroke::new(2.0, visuals.hyperlink_color))
+                .inner_margin(14);
+            egui::Popup::from_toggle_button_response(&link)
+                .frame(frame)
+                .show(supported_sites);
 
             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
             ui.with_layout(right_to_left, |ui| {
