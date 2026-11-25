@@ -82,7 +82,7 @@ cp "target/$target/release/yt-mp3.exe" "$stage/"
 python3 scripts/make_ico.py assets/icon.png "$work/icon.ico"
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
-outfile="$work/YouTube-Download-Setup-$version.exe"
+outfile="$work/DamaDama-Setup-$version.exe"
 
 makensis -V2 -INPUTCHARSET UTF8 \
     "-DSTAGE=$stage" "-DICON=$work/icon.ico" \

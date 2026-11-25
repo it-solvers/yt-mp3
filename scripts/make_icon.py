@@ -28,35 +28,21 @@ def polygon(x, y, points):
     return distance
 
 
-def stroke(x, y, points, radius=22):
-    """점들을 차례로 이은 굵은 선까지의 거리."""
-    distance = math.inf
-    for (ax, ay), (bx, by) in zip(points, points[1:]):
-        dx, dy = bx - ax, by - ay
-        t = ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)
-        t = min(max(t, 0.0), 1.0)
-        distance = min(distance, math.hypot(x - ax - dx * t, y - ay - dy * t))
-    return distance - radius
+def arrow(x, y):
+    """내려받기를 뜻하는 아래 화살표."""
+    shaft = rounded_box(x, y, 512, 322, 62, 138, 24)
+    head = polygon(x, y, [(340, 418), (684, 418), (512, 590)])
+    return min(shaft, head)
 
 
-def screen(x, y):
-    """받침대가 있는 영상 화면."""
-    body = rounded_box(x, y, 512, 352, 270, 190, 56)
-    stand = rounded_box(x, y, 512, 566, 110, 16, 16)
-    return min(body, stand)
+def bowl(x, y):
+    """받은 것을 담는 그릇. 둥근 사각형의 아래쪽만 사용."""
+    body = rounded_box(x, y, 512, 630, 292, 196, 180)
+    return max(body, 650 - y)
 
 
-def play(x, y):
-    """화면 가운데의 재생 삼각형."""
-    return polygon(x, y, [(442, 262), (620, 352), (442, 442)])
-
-
-def download_mark(x, y):
-    """받침대로 내려오는 화살표. 내려받기를 뜻함."""
-    shaft = rounded_box(x, y, 512, 652, 40, 46, 8)
-    head = polygon(x, y, [(408, 686), (616, 686), (512, 782)])
-    tray = stroke(x, y, [(330, 766), (330, 842), (694, 842), (694, 766)])
-    return min(shaft, head, tray)
+def symbol(x, y):
+    return min(arrow(x, y), bowl(x, y))
 
 
 def coverage(distance):
@@ -73,12 +59,9 @@ def pixel(x, y):
     alpha = coverage(rounded_box(x, y, 512, 512, 412, 412, 186))
     if alpha == 0:
         return (0, 0, 0, 0)
-    # 배경은 위의 흰색에서 아래의 옅은 회색으로
-    color = mix((255, 255, 255), (228, 228, 232), (y - 100) / 824)
-    # 아래에 있는 것부터 차례로 겹쳐 그리기
-    color = mix(color, (224, 36, 36), coverage(screen(x, y)))
-    color = mix(color, (255, 255, 255), coverage(play(x, y)))
-    color = mix(color, (44, 44, 50), coverage(download_mark(x, y)))
+    # 배경은 위의 청록색에서 아래의 남색으로
+    color = mix((32, 190, 170), (36, 72, 150), (y - 100) / 824)
+    color = mix(color, (255, 255, 255), coverage(symbol(x, y)))
     return (*(round(c) for c in color), round(alpha * 255))
 
 

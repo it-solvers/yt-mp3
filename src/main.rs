@@ -27,7 +27,7 @@ fn main() -> eframe::Result {
     };
 
     eframe::run_native(
-        "YouTube Download",
+        "DamaDama",
         options,
         Box::new(|cc| Ok(Box::new(App::new(cc.storage)))),
     )
@@ -35,6 +35,11 @@ fn main() -> eframe::Result {
 
 // 화면 하단에 보여줄 저작권 정보
 const COPYRIGHT: &str = "© 2026 아이티해결단(이혁). All rights reserved.";
+
+// URL 입력창 아래에 보여줄 안내. 실제 지원 범위는 yt-dlp에 따라 달라짐
+const SUPPORTED_SITES: &str = "\
+지원 사이트: YouTube, Instagram, TikTok, X, Facebook, Vimeo, SoundCloud 등
+YouTube 외에는 확인 전이며, 로그인이 필요하거나 비공개·DRM 콘텐츠는 받을 수 없어요";
 
 // 화면이 기억해야 하는 값들
 struct App {
@@ -470,6 +475,8 @@ impl eframe::App for App {
                     ui.add(egui::TextEdit::singleline(&mut self.url).desired_width(f32::INFINITY));
                 // 입력창에서 Enter를 눌렀는지
                 let entered = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                ui.label(egui::RichText::new(SUPPORTED_SITES).size(11.0).weak());
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {

@@ -4,10 +4,11 @@
 Unicode true
 !include "MUI2.nsh"
 
-!define NAME "YouTube Download"
-; 이전에 쓰던 이름들. 설치 폴더는 처음 이름을 그대로 써서 이전 설치본을 덮어씀
+!define NAME "DamaDama"
+; 이전에 쓰던 이름들. 이전 설치본을 정리할 때 사용
 !define OLD_NAME "YouTube MP3"
 !define OLD_NAME_KO "유투브내려받기"
+!define OLD_NAME_EN "YouTube Download"
 !define PUBLISHER "아이티해결단(이혁)"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\yt-mp3"
 
@@ -16,7 +17,7 @@ OutFile "${OUTFILE}"
 ; 관리자 권한 없이 사용자 폴더에 설치.
 ; yt-dlp를 나중에 업데이트할 수 있도록 쓰기 가능한 위치를 사용
 RequestExecutionLevel user
-InstallDir "$LOCALAPPDATA\Programs\${OLD_NAME}"
+InstallDir "$LOCALAPPDATA\Programs\${NAME}"
 SetCompressor /SOLID lzma
 
 !define MUI_ICON "${ICON}"
@@ -38,6 +39,22 @@ VIAddVersionKey /LANG=${LANG_KOREAN} "FileVersion" "${VERSION}"
 VIAddVersionKey /LANG=${LANG_KOREAN} "FileDescription" "${NAME} 설치 파일"
 VIAddVersionKey /LANG=${LANG_KOREAN} "CompanyName" "${PUBLISHER}"
 VIAddVersionKey /LANG=${LANG_KOREAN} "LegalCopyright" "${PUBLISHER}"
+
+; 이 설치 파일이 설치한 파일만 하나씩 삭제 (사용자가 넣은 파일은 남김)
+!macro RemoveFiles DIR
+    Delete "${DIR}\tools\yt-dlp.exe"
+    Delete "${DIR}\tools\ffmpeg.exe"
+    Delete "${DIR}\tools\ffprobe.exe"
+    Delete "${DIR}\tools\deno.exe"
+    Delete "${DIR}\licenses\ffmpeg-LICENSE.txt"
+    Delete "${DIR}\licenses\ffmpeg-README.txt"
+    Delete "${DIR}\yt-mp3.exe"
+    Delete "${DIR}\icon.ico"
+    Delete "${DIR}\uninstall.exe"
+    RMDir "${DIR}\tools"
+    RMDir "${DIR}\licenses"
+    RMDir "${DIR}"
+!macroend
 
 Section "Install"
     SetOutPath "$INSTDIR\tools"
@@ -61,6 +78,10 @@ Section "Install"
     Delete "$DESKTOP\${OLD_NAME}.lnk"
     Delete "$SMPROGRAMS\${OLD_NAME_KO}.lnk"
     Delete "$DESKTOP\${OLD_NAME_KO}.lnk"
+    Delete "$SMPROGRAMS\${OLD_NAME_EN}.lnk"
+    Delete "$DESKTOP\${OLD_NAME_EN}.lnk"
+    ; 이전 version이 설치했던 폴더 정리
+    !insertmacro RemoveFiles "$LOCALAPPDATA\Programs\${OLD_NAME}"
 
     CreateShortcut "$SMPROGRAMS\${NAME}.lnk" "$INSTDIR\yt-mp3.exe" "" "$INSTDIR\icon.ico"
     CreateShortcut "$DESKTOP\${NAME}.lnk" "$INSTDIR\yt-mp3.exe" "" "$INSTDIR\icon.ico"
@@ -76,19 +97,7 @@ Section "Install"
 SectionEnd
 
 Section "Uninstall"
-    ; 설치한 파일만 하나씩 삭제 (사용자가 넣은 파일은 남김)
-    Delete "$INSTDIR\tools\yt-dlp.exe"
-    Delete "$INSTDIR\tools\ffmpeg.exe"
-    Delete "$INSTDIR\tools\ffprobe.exe"
-    Delete "$INSTDIR\tools\deno.exe"
-    Delete "$INSTDIR\licenses\ffmpeg-LICENSE.txt"
-    Delete "$INSTDIR\licenses\ffmpeg-README.txt"
-    Delete "$INSTDIR\yt-mp3.exe"
-    Delete "$INSTDIR\icon.ico"
-    Delete "$INSTDIR\uninstall.exe"
-    RMDir "$INSTDIR\tools"
-    RMDir "$INSTDIR\licenses"
-    RMDir "$INSTDIR"
+    !insertmacro RemoveFiles "$INSTDIR"
 
     Delete "$SMPROGRAMS\${NAME}.lnk"
     Delete "$DESKTOP\${NAME}.lnk"

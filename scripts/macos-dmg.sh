@@ -17,7 +17,7 @@ fi
 work="$root/target/macos"
 downloads="$work/downloads"
 stage="$work/stage"
-app="$stage/YouTube Download.app"
+app="$stage/DamaDama.app"
 tools="$app/Contents/Resources/tools"
 licenses="$app/Contents/Resources/licenses"
 
@@ -48,7 +48,7 @@ fetch() {
 # 항상 새로 받아서 최신 버전을 담기
 rm -rf "$downloads" "$stage"
 mkdir -p "$downloads" "$stage"
-cp -R "target/release/bundle/YouTube Download.app" "$app"
+cp -R "target/release/bundle/DamaDama.app" "$app"
 mkdir -p "$tools" "$licenses"
 
 ytdlp="https://github.com/yt-dlp/yt-dlp/releases/latest/download"
@@ -97,8 +97,8 @@ codesign --verify --strict "$app"
 ln -s /Applications "$stage/Applications"
 cat > "$stage/설치 안내.txt" <<'GUIDE'
 설치 방법
-1. "YouTube Download"를 Applications 폴더로 끌어다 놓으세요.
-2. Applications 폴더에서 "YouTube Download"를 실행하세요.
+1. "DamaDama"를 Applications 폴더로 끌어다 놓으세요.
+2. Applications 폴더에서 "DamaDama"를 실행하세요.
 
 "열 수 없다"는 경고가 나올 때
 Apple의 공증을 받지 않은 앱이라 처음 한 번은 직접 허용해야 해요.
@@ -108,8 +108,8 @@ Apple Silicon(M1 이후) Mac용입니다.
 GUIDE
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
-outfile="$work/YouTube-Download-$version-arm64.dmg"
+outfile="$work/DamaDama-$version-arm64.dmg"
 hdiutil create -quiet -ov -format UDZO \
-    -volname "YouTube Download" -srcfolder "$stage" "$outfile"
+    -volname "DamaDama" -srcfolder "$stage" "$outfile"
 
 echo "완료: $outfile"
