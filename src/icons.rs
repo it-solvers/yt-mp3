@@ -1,5 +1,6 @@
 // 직접 그리는 아이콘.
-// 색은 청록 하나만 강조에 쓰고 나머지는 회색. 삭제는 마우스를 올렸을 때만 빨간색.
+// 버튼은 강조색(청록)과 회색만 사용. 삭제는 마우스를 올렸을 때만 빨간색.
+// 파일 종류 표시는 소리(청록)와 동영상(주황)을 색으로 구별.
 // 이미지 파일 없이 도형으로 그려서 어떤 크기에서도 선명함
 
 use eframe::egui::{
@@ -87,9 +88,12 @@ pub fn picture(ui: &mut Ui, icon: Icon, label: String) -> Response {
     if ui.is_rect_visible(rect) {
         let weak = ui.visuals().weak_text_color();
         match icon {
-            // 파일 종류는 옅은 청록 배경으로 표시
+            // 파일 종류는 종류별 색의 옅은 배경으로 표시
             Icon::Music | Icon::Video => {
-                let accent = ui.visuals().hyperlink_color;
+                let accent = match icon {
+                    Icon::Video => video_color(ui),
+                    _ => ui.visuals().hyperlink_color,
+                };
                 let tint = ui.visuals().panel_fill.lerp_to_gamma(accent, 0.18);
                 ui.painter().rect_filled(rect, CornerRadius::same(8), tint);
                 paint(ui.painter(), rect.shrink(7.0), icon, accent, tint);
@@ -102,6 +106,15 @@ pub fn picture(ui: &mut Ui, icon: Icon, label: String) -> Response {
         }
     }
     response.on_hover_text(label)
+}
+
+// 동영상 표시색(주황). 밝은 화면에서는 잘 보이도록 진하게
+fn video_color(ui: &Ui) -> Color32 {
+    if ui.visuals().dark_mode {
+        Color32::from_rgb(244, 164, 72)
+    } else {
+        Color32::from_rgb(196, 105, 10)
+    }
 }
 
 // 보조 버튼의 배경색과 그림색
