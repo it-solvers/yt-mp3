@@ -451,7 +451,7 @@ impl App {
         let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
         ui.allocate_ui_with_layout(row, right_to_left, |ui| {
             let label = tr!("저장하기", "Save");
-            clicked = icons::primary_button(ui, Icon::Download, label, ACCENT, has_url).clicked();
+            clicked = icons::primary_button(ui, Icon::Download, label, has_url).clicked();
 
             let input = ui.add(
                 egui::TextEdit::singleline(&mut self.url)
@@ -571,6 +571,7 @@ impl App {
         // 목록을 그리는 동안에는 클릭한 파일만 기억하고, 재생과 삭제는 그린 뒤에 하기
         let mut clicked = None;
         let mut to_delete = None;
+        let mut toggle_pause = false;
         // 기본 스크롤 bar는 평소에 숨어 있으므로, 목록이 넘치면 항상 보이는 모양 사용
         ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
         egui::ScrollArea::vertical()
@@ -578,44 +579,82 @@ impl App {
             // 기본 최소 높이(64)를 없애서, 공간이 좁아도 하단 영역 뒤로 넘치지 않게 하기
             .min_scrolled_height(0.0)
             .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
                 for path in &self.files {
                     let video = is_video(path);
-                    let is_current = self.playing.as_ref().is_some_and(|p| &p.path == path);
-                    ui.horizontal(|ui| {
-                        let hint = if video {
-                            tr!("기본 player로 열기", "Open in default player")
-                        } else {
-                            tr!("재생", "Play")
-                        };
-                        if icons::button(ui, Icon::Play, hint).clicked() {
-                            clicked = Some(path.clone());
-                        }
-                        // 삭제 버튼은 재생 버튼과 헷갈리지 않도록 오른쪽 끝에 배치
-                        let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
-                        ui.with_layout(right_to_left, |ui| {
-                            let delete = tr!("삭제", "Delete");
-                            if icons::button(ui, Icon::Trash, delete).clicked() {
-                                to_delete = Some(path.clone());
+                    // 이 파일이 재생 중이면 Some(일시정지 여부)
+                    let current = self
+                        .playing
+                        .as_ref()
+                        .filter(|p| &p.path == path)
+                        .map(|p| p.player.is_paused());
+
+                    file_card(ui, current.is_some()).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            if video {
+                                icons::picture(ui, Icon::Video, tr!("동영상", "Video"));
+                            } else {
+                                icons::picture(ui, Icon::Music, tr!("소리", "Audio"));
                             }
-                            // 파일 이름은 남은 공간에 왼쪽부터 표시
-                            let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
-                            ui.with_layout(left_to_right, |ui| {
-                                // 파일 이름이 줄어도 동영상인지 알 수 있게 표시
-                                if video {
-                                    icons::picture(ui, Icon::Video, tr!("동영상", "Video"));
+
+                            // 버튼은 오른쪽 끝에 배치
+                            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+                            ui.with_layout(right_to_left, |ui| {
+                                let delete = tr!("삭제", "Delete");
+                                if icons::button(ui, Icon::Trash, delete).clicked() {
+                                    to_delete = Some(path.clone());
                                 }
-                                let mut name = egui::RichText::new(file_name(path));
-                                // 재생 중인 곡은 강조색으로 표시
-                                if is_current {
-                                    name = name.strong().color(ui.visuals().hyperlink_color);
+
+                                // 재생 중인 곡의 버튼은 일시정지와 계속 재생
+                                match current {
+                                    Some(false) => {
+                                        let pause = tr!("일시정지", "Pause");
+                                        toggle_pause |=
+                                            icons::button(ui, Icon::Pause, pause).clicked();
+                                    }
+                                    Some(true) => {
+                                        let resume = tr!("계속 재생", "Resume");
+                                        toggle_pause |=
+                                            icons::button(ui, Icon::Play, resume).clicked();
+                                    }
+                                    None => {
+                                        let hint = if video {
+                                            tr!("기본 player로 열기", "Open in default player")
+                                        } else {
+                                            tr!("재생", "Play")
+                                        };
+                                        if icons::button(ui, Icon::Play, hint).clicked() {
+                                            clicked = Some(path.clone());
+                                        }
+                                    }
                                 }
-                                ui.add(egui::Label::new(name).truncate());
+
+                                // 파일 이름은 남은 공간에 왼쪽부터 표시
+                                let left_to_right =
+                                    egui::Layout::left_to_right(egui::Align::Center);
+                                ui.with_layout(left_to_right, |ui| {
+                                    let mut name = egui::RichText::new(file_name(path))
+                                        .color(ui.visuals().strong_text_color());
+                                    // 재생 중인 곡은 강조색으로 표시
+                                    if current.is_some() {
+                                        name = name.strong().color(ui.visuals().hyperlink_color);
+                                    }
+                                    ui.add(egui::Label::new(name).truncate());
+                                });
                             });
                         });
                     });
                 }
             });
 
+        if toggle_pause && let Some(playing) = &self.playing {
+            if playing.player.is_paused() {
+                playing.player.play();
+            } else {
+                playing.player.pause();
+            }
+        }
         if let Some(path) = clicked {
             if is_video(&path) {
                 self.open_video(&path);
@@ -961,6 +1000,31 @@ fn tool_path() -> OsString {
     folders.push(PathBuf::from("/usr/local/bin"));
 
     std::env::join_paths(folders).unwrap_or(current)
+}
+
+// 목록의 파일 한 줄을 감싸는 카드. 재생 중이면 강조색으로 구별
+fn file_card(ui: &egui::Ui, current: bool) -> egui::Frame {
+    let visuals = ui.visuals();
+    let (card, line) = if visuals.dark_mode {
+        (
+            egui::Color32::from_rgb(38, 42, 43),
+            egui::Color32::from_gray(60),
+        )
+    } else {
+        (egui::Color32::WHITE, egui::Color32::from_gray(221))
+    };
+    let (fill, line) = if current {
+        let accent = visuals.hyperlink_color;
+        (card.lerp_to_gamma(accent, 0.14), accent)
+    } else {
+        (card, line)
+    };
+
+    egui::Frame::new()
+        .fill(fill)
+        .stroke(egui::Stroke::new(1.0, line))
+        .corner_radius(12)
+        .inner_margin(egui::Margin::symmetric(10, 6))
 }
 
 // 설치한 프로그램에 들어 있는 license 문서의 위치. 없으면 None
