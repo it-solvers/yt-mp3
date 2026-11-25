@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 
 cargo build --release
 
-app="target/release/bundle/JustGrab.app"
+app="target/release/bundle/JustGrab Player.app"
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
 
 rm -rf "$app"
@@ -35,9 +35,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>JustGrab</string>
+    <string>JustGrab Player</string>
     <key>CFBundleDisplayName</key>
-    <string>JustGrab</string>
+    <string>JustGrab Player</string>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>LSHasLocalizedDisplayName</key>
@@ -74,8 +74,8 @@ localize() {
 "CFBundleDisplayName" = "$2";
 STRINGS
 }
-localize en "JustGrab"
-localize ko "걍담아"
+localize en "JustGrab Player"
+localize ko "걍담아 플레이어"
 
 # 이 Mac에서 쓰기 위한 임시(ad-hoc) 서명
 codesign --force --sign - "$app"

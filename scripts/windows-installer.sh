@@ -129,7 +129,7 @@ python3 -I scripts/make_notices.py "$stage/licenses/THIRD-PARTY-NOTICES.txt" \
 python3 scripts/make_ico.py assets/icon.png "$work/icon.ico"
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
-outfile="$work/JustGrab-Setup-$version.exe"
+outfile="$work/JustGrab-Player-Setup-$version.exe"
 
 makensis -V2 -INPUTCHARSET UTF8 \
     "-DSTAGE=$stage" "-DICON=$work/icon.ico" \

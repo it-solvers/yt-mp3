@@ -4,13 +4,17 @@
 Unicode true
 !include "MUI2.nsh"
 
-!define NAME "JustGrab"
-!define NAME_KO "걍담아"
+!define NAME "JustGrab Player"
+!define NAME_KO "걍담아 플레이어"
+; 설치 폴더 이름. 이름이 바뀌어도 같은 폴더에 덮어 설치
+!define FOLDER "JustGrab"
 ; 이전에 쓰던 이름들. 이전 설치본을 정리할 때 사용
 !define OLD_NAME "YouTube MP3"
 !define OLD_NAME_KO "유투브내려받기"
 !define OLD_NAME_EN "YouTube Download"
 !define OLD_NAME_DAMA "DamaDama"
+!define OLD_NAME_SHORT "JustGrab"
+!define OLD_NAME_SHORT_KO "걍담아"
 !define PUBLISHER "ITSolvers(Hyeok Lee)"
 !define PUBLISHER_KO "아이티해결단(이혁)"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\yt-mp3"
@@ -19,7 +23,7 @@ OutFile "${OUTFILE}"
 ; 관리자 권한 없이 사용자 폴더에 설치.
 ; yt-dlp를 나중에 업데이트할 수 있도록 쓰기 가능한 위치를 사용
 RequestExecutionLevel user
-InstallDir "$LOCALAPPDATA\Programs\${NAME}"
+InstallDir "$LOCALAPPDATA\Programs\${FOLDER}"
 SetCompressor /SOLID lzma
 
 !define MUI_ICON "${ICON}"
@@ -99,6 +103,10 @@ Section "Install"
     Delete "$DESKTOP\${OLD_NAME_EN}.lnk"
     Delete "$SMPROGRAMS\${OLD_NAME_DAMA}.lnk"
     Delete "$DESKTOP\${OLD_NAME_DAMA}.lnk"
+    Delete "$SMPROGRAMS\${OLD_NAME_SHORT}.lnk"
+    Delete "$DESKTOP\${OLD_NAME_SHORT}.lnk"
+    Delete "$SMPROGRAMS\${OLD_NAME_SHORT_KO}.lnk"
+    Delete "$DESKTOP\${OLD_NAME_SHORT_KO}.lnk"
     ; 이전 version이 설치했던 폴더 정리
     !insertmacro RemoveFiles "$LOCALAPPDATA\Programs\${OLD_NAME}"
     !insertmacro RemoveFiles "$LOCALAPPDATA\Programs\${OLD_NAME_DAMA}"

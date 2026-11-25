@@ -17,7 +17,7 @@ fi
 work="$root/target/macos"
 downloads="$work/downloads"
 stage="$work/stage"
-app="$stage/JustGrab.app"
+app="$stage/JustGrab Player.app"
 tools="$app/Contents/Resources/tools"
 licenses="$app/Contents/Resources/licenses"
 
@@ -48,7 +48,7 @@ fetch() {
 # 항상 새로 받아서 최신 버전을 담기
 rm -rf "$downloads" "$stage"
 mkdir -p "$downloads" "$stage"
-cp -R "target/release/bundle/JustGrab.app" "$app"
+cp -R "target/release/bundle/JustGrab Player.app" "$app"
 mkdir -p "$tools" "$licenses"
 
 ytdlp="https://github.com/yt-dlp/yt-dlp/releases/latest/download"
@@ -133,7 +133,7 @@ codesign --verify --strict "$app"
 ln -s /Applications "$stage/Applications"
 cat > "$stage/설치 안내 - Install Guide.txt" <<'GUIDE'
 설치 방법
-1. "JustGrab"(걍담아)을 Applications 폴더로 끌어다 놓으세요.
+1. "JustGrab Player"(걍담아 플레이어)를 Applications 폴더로 끌어다 놓으세요.
 2. Applications 폴더에서 실행하세요.
 
 "열 수 없다"는 경고가 나올 때
@@ -145,7 +145,7 @@ Apple Silicon(M1 이후) Mac용입니다.
 --------------------------------------------------------------------
 
 How to install
-1. Drag "JustGrab" into the Applications folder.
+1. Drag "JustGrab Player" into the Applications folder.
 2. Open it from the Applications folder.
 
 If macOS says the app cannot be opened
@@ -156,8 +156,8 @@ For Apple Silicon (M1 or later) Macs.
 GUIDE
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
-outfile="$work/JustGrab-$version-arm64.dmg"
+outfile="$work/JustGrab-Player-$version-arm64.dmg"
 hdiutil create -quiet -ov -format UDZO \
-    -volname "JustGrab" -srcfolder "$stage" "$outfile"
+    -volname "JustGrab Player" -srcfolder "$stage" "$outfile"
 
 echo "완료: $outfile"
