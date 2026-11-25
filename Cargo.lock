@@ -4789,7 +4789,7 @@ dependencies = [
 
 [[package]]
 name = "yt-mp3"
-version = "1.0.32"
+version = "1.0.33"
 dependencies = [
  "eframe",
  "fastrand",

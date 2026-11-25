@@ -99,8 +99,8 @@ fn supported_sites(ui: &mut egui::Ui) {
     );
 }
 
-// 재생 영역의 내용 높이 (곡 정보 34 + 재생 버튼 52 + 탐색 bar 18 + 간격)
-const PLAYER_HEIGHT: f32 = 110.0;
+// 재생 영역의 내용 높이 (제목 20 + 곡 정보 28 + 재생 버튼 52 + 탐색 bar 18 + 간격)
+const PLAYER_HEIGHT: f32 = 127.0;
 
 // 화면이 기억해야 하는 값들
 struct App {
@@ -437,9 +437,29 @@ impl App {
         }
     }
 
-    // 재생 영역의 첫 줄: 음표, 곡 제목과 순서, 음량
+    // 재생 영역의 첫 줄: 전체 폭을 쓰는 곡 제목
+    fn track_title(&mut self, ui: &mut egui::Ui) {
+        let size = egui::vec2(ui.available_width(), 20.0);
+        let layout = egui::Layout::top_down(egui::Align::Center);
+        ui.allocate_ui_with_layout(size, layout, |ui| {
+            ui.set_min_size(size);
+            let Some(playing) = &self.playing else {
+                let hint = tr!("재생할 곡을 선택하세요", "Select a track to play");
+                ui.add(egui::Label::new(egui::RichText::new(hint).weak()).truncate());
+                return;
+            };
+            // 재생 위치에 맞춰 움직이므로 일시정지하면 함께 멈춤
+            marquee(ui, &file_name(&playing.path), playing.player.get_pos());
+            if !playing.player.is_paused() {
+                // 부드럽게 흐르도록 자주 다시 그리기
+                ui.ctx().request_repaint_after(Duration::from_millis(33));
+            }
+        });
+    }
+
+    // 재생 영역의 둘째 줄: 음표, 곡 순서, 음량
     fn track_info(&mut self, ui: &mut egui::Ui) {
-        let row = egui::vec2(ui.available_width(), 34.0);
+        let row = egui::vec2(ui.available_width(), 28.0);
         let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
         ui.allocate_ui_with_layout(row, right_to_left, |ui| {
             ui.scope(|ui| {
@@ -465,27 +485,14 @@ impl App {
             let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
             ui.with_layout(left_to_right, |ui| {
                 icons::picture(ui, Icon::Music, tr!("재생 중인 곡", "Now playing"));
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    let Some(playing) = &self.playing else {
-                        let hint = tr!("재생할 곡을 선택하세요", "Select a track to play");
-                        ui.add_space(8.0);
-                        ui.add(egui::Label::new(egui::RichText::new(hint).weak()).truncate());
-                        return;
-                    };
-                    // 재생 위치에 맞춰 움직이므로 일시정지하면 함께 멈춤
-                    marquee(ui, &file_name(&playing.path), playing.player.get_pos());
-                    if !playing.player.is_paused() {
-                        // 부드럽게 흐르도록 자주 다시 그리기
-                        ui.ctx().request_repaint_after(Duration::from_millis(33));
-                    }
-                    // 소리 파일 중 몇 번째인지
+                // 소리 파일 중 몇 번째인지
+                if let Some(playing) = &self.playing {
                     let songs = self.songs();
                     if let Some(index) = songs.iter().position(|p| p == &playing.path) {
                         let number = format!("{} / {}", index + 1, songs.len());
-                        ui.label(egui::RichText::new(number).size(11.0).weak());
+                        ui.label(egui::RichText::new(number).weak());
                     }
-                });
+                }
             });
         });
     }
@@ -579,6 +586,7 @@ impl App {
         // 손잡이에도 쓰이는 색이므로 불투명하게
         ui.visuals_mut().widgets.inactive.bg_fill = colors.edge.lerp_to_gamma(colors.ink, 0.2);
 
+        self.track_title(ui);
         self.track_info(ui);
         self.transport(ui);
 
@@ -1430,6 +1438,8 @@ fn marquee(ui: &mut egui::Ui, text: &str, elapsed: Duration) {
 
     let size = egui::vec2(ui.available_width(), galley.size().y);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    // 양끝에서 글자가 서서히 사라지는 폭
+    const FADE: f32 = 24.0;
     // 짧은 제목은 화면에서 다 빠져나간 뒤에 다시 나오게 하기
     let period = (galley.size().x + GAP).max(rect.width());
     let offset = (elapsed.as_secs_f32() * SPEED) % period;
@@ -1440,8 +1450,36 @@ fn marquee(ui: &mut egui::Ui, text: &str, elapsed: Duration) {
         painter.galley(egui::pos2(start, rect.top()), galley.clone(), color);
     }
 
+    // 글자가 뚝 잘려 보이지 않게 양끝을 바탕색으로 흐리게 덮기
+    let background = theme::palette(ui).edge;
+    fade(&painter, rect, FADE, background, true);
+    fade(&painter, rect, FADE, background, false);
+
     // 마우스를 올리면 전체 제목 보여주기
     response.on_hover_text(text);
+}
+
+// rect의 왼쪽 또는 오른쪽 끝에, 바깥으로 갈수록 background가 진해지는 띠 그리기
+fn fade(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    width: f32,
+    background: egui::Color32,
+    left: bool,
+) {
+    let (outer, inner) = if left {
+        (rect.left(), rect.left() + width)
+    } else {
+        (rect.right(), rect.right() - width)
+    };
+    let mut mesh = egui::Mesh::default();
+    for (x, color) in [(outer, background), (inner, egui::Color32::TRANSPARENT)] {
+        mesh.colored_vertex(egui::pos2(x, rect.top()), color);
+        mesh.colored_vertex(egui::pos2(x, rect.bottom()), color);
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(1, 2, 3);
+    painter.add(mesh);
 }
 
 // 시간을 "분:초" 모양으로 바꾸기
