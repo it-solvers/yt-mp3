@@ -542,8 +542,8 @@ impl App {
             tr!("이미 재생목록에 있어요", "Already in the playlist")
         } else {
             tr!(
-                "추가할 mp3, mp4 파일이 없어요",
-                "No mp3 or mp4 files to add",
+                "추가할 음악, 영상 파일이 없어요",
+                "No music or video files to add",
             )
         };
     }
@@ -1887,8 +1887,8 @@ fn empty_playlist(ui: &mut egui::Ui) {
         ui.label(egui::RichText::new(tr!("내려받거나", "Download something, or")).weak());
         ui.label(
             egui::RichText::new(tr!(
-                "mp3, mp4 파일과 폴더를 끌어다 놓으세요",
-                "drop mp3, mp4 files or folders here",
+                "음악, 영상 파일과 폴더를 끌어다 놓으세요",
+                "drop music, video files or folders here",
             ))
             .strong(),
         );
@@ -1926,7 +1926,7 @@ fn drop_overlay(ui: &egui::Ui) {
             -24.0,
         ),
         (
-            tr!("mp3, mp4 파일 또는 폴더", "mp3, mp4 files or folders"),
+            tr!("음악, 영상 파일 또는 폴더", "Music, video files or folders"),
             13.0,
             colors.ink,
             6.0,
@@ -2058,16 +2058,31 @@ fn has_extension(path: &Path, extension: &str) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case(extension))
 }
 
+// 앱에서 재생하는 소리 파일의 확장자
+const AUDIO_EXTENSIONS: [&str; 6] = ["mp3", "wav", "flac", "ogg", "m4a", "aac"];
+// 컴퓨터의 기본 앱으로 여는 동영상 파일의 확장자
+const VIDEO_EXTENSIONS: [&str; 7] = ["mp4", "mov", "m4v", "mkv", "webm", "avi", "wmv"];
+
 fn is_video(path: &Path) -> bool {
-    has_extension(path, "mp4")
+    VIDEO_EXTENSIONS
+        .iter()
+        .any(|extension| has_extension(path, extension))
 }
 
-// 폴더 안의 mp3, mp4 파일을 최신순으로 가져오기
+// 재생목록에 넣을 수 있는 파일인지
+fn is_media(path: &Path) -> bool {
+    is_video(path)
+        || AUDIO_EXTENSIONS
+            .iter()
+            .any(|extension| has_extension(path, extension))
+}
+
+// 폴더 안의 음악, 동영상 파일을 최신순으로 가져오기
 fn list_media(folder: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut files: Vec<PathBuf> = fs::read_dir(folder)?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
-        .filter(|path| path.is_file() && (has_extension(path, "mp3") || is_video(path)))
+        .filter(|path| path.is_file() && is_media(path))
         .collect();
 
     files.sort_by_key(|path| {
@@ -2145,14 +2160,14 @@ fn add_to_front(files: &mut Vec<PathBuf>, paths: Vec<PathBuf>) -> usize {
     count
 }
 
-// 파일과 폴더들에서 mp3, mp4 모으기. 폴더는 하위 폴더까지 이름순으로 찾음
+// 파일과 폴더들에서 음악과 동영상 파일 모으기. 폴더는 하위 폴더까지 이름순으로 찾음
 fn collect_media(paths: &[PathBuf]) -> Vec<PathBuf> {
     // 너무 깊은 폴더는 찾지 않음
     const MAX_DEPTH: usize = 8;
 
     fn visit(path: &Path, depth: usize, found: &mut Vec<PathBuf>) {
         if path.is_file() {
-            if has_extension(path, "mp3") || is_video(path) {
+            if is_media(path) {
                 found.push(path.to_path_buf());
             }
             return;
@@ -2463,6 +2478,23 @@ mod tests {
             .to_vec();
         assert_eq!(add_to_front(&mut files, new), 2);
         assert_eq!(files, ["a.mp3", "b.mp3", "old.mp3"].map(PathBuf::from));
+    }
+
+    #[test]
+    fn recognizes_media_files() {
+        for name in ["a.mp3", "b.FLAC", "c.m4a", "d.wav", "e.ogg", "f.aac"] {
+            let path = Path::new(name);
+            assert!(is_media(path) && !is_video(path), "{name}");
+        }
+        for name in [
+            "a.mp4", "b.MOV", "c.mkv", "d.webm", "e.avi", "f.wmv", "g.m4v",
+        ] {
+            let path = Path::new(name);
+            assert!(is_media(path) && is_video(path), "{name}");
+        }
+        for name in ["a.mid", "b.txt", "c.aiff", "mp3", "d.mp3.part"] {
+            assert!(!is_media(Path::new(name)), "{name}");
+        }
     }
 
     #[test]
