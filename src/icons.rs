@@ -202,6 +202,13 @@ pub fn ghost_button(ui: &mut Ui, icon: Icon, label: String) -> Response {
         .on_hover_text(label)
 }
 
+// 다른 버튼 안에 넣는 그림. 설명이나 반응 없이 글자색으로 그림
+pub fn symbol(ui: &mut Ui, icon: Icon) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
+    let color = palette(ui).ink;
+    paint(ui.painter(), rect.shrink(1.0), icon, color);
+}
+
 // 설명용 그림 (누를 수 없음). 배경 없이 그려서 버튼과 구별
 pub fn picture(ui: &mut Ui, icon: Icon, label: String) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
@@ -213,7 +220,13 @@ pub fn picture(ui: &mut Ui, icon: Icon, label: String) -> Response {
 }
 
 // 아이콘과 글자가 함께 있는 강조 버튼
-pub fn primary_button(ui: &mut Ui, icon: Icon, label: String, enabled: bool) -> Response {
+pub fn primary_button(
+    ui: &mut Ui,
+    icon: Icon,
+    label: String,
+    enabled: bool,
+    width: f32,
+) -> Response {
     let enabled = enabled && ui.is_enabled();
     let colors = palette(ui);
     let font = eframe::egui::TextStyle::Button.resolve(ui.style());
@@ -221,8 +234,7 @@ pub fn primary_button(ui: &mut Ui, icon: Icon, label: String, enabled: bool) -> 
         .painter()
         .layout_no_wrap(label.clone(), font, colors.on_point);
 
-    // 여백 12 + 아이콘 16 + 간격 6 + 글자 + 여백 14
-    let size = vec2((text.size().x + 48.0).max(92.0), 32.0);
+    let size = vec2(width, 38.0);
     let sense = if enabled {
         Sense::click()
     } else {

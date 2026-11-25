@@ -961,19 +961,16 @@ impl App {
         }
     }
 
-    // 화면 위쪽: URL 입력, 저장 형식, 저장 버튼, 저장 위치
+    // 화면 위쪽: URL 입력과 형식, 저장 위치, 저장 버튼
     fn download_form(&mut self, ui: &mut egui::Ui) {
         let has_url = !self.url.trim().is_empty();
         let mut clicked = false;
         let mut entered = false;
 
-        // 형식 선택과 저장 버튼을 오른쪽에 두고, 입력창이 남은 폭을 채우기
+        // 첫 줄: 형식 선택을 오른쪽에 두고, 입력창이 남은 폭을 채우기
         let row = egui::vec2(ui.available_width(), 32.0);
         let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
         ui.allocate_ui_with_layout(row, right_to_left, |ui| {
-            let label = tr!("저장하기", "Save");
-            clicked = icons::primary_button(ui, Icon::Download, label, has_url).clicked();
-
             let name = |format| match format {
                 Format::Mp3 => tr!("소리 (MP3)", "Audio (MP3)"),
                 Format::Mp4 => tr!("영상 (MP4)", "Video (MP4)"),
@@ -1019,25 +1016,24 @@ impl App {
             entered = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         });
 
+        // 둘째 줄: 다운로드 폴더
         ui.add_space(4.0);
-        // 저장 폴더는 경로가 다 보이도록 한 줄을 따로 사용
-        ui.horizontal(|ui| {
-            let change = tr!("다운로드 폴더 변경", "Change download folder");
-            if icons::button(ui, Icon::Folder, change).clicked() {
-                // 취소하면 None이므로 기존 폴더를 그대로 유지
-                if let Some(folder) = rfd::FileDialog::new()
-                    .set_directory(&self.folder)
-                    .pick_folder()
-                {
-                    // 받는 위치만 바꾸고 재생목록은 그대로
-                    self.folder = folder;
-                }
+        if folder_button(ui, &self.folder) {
+            // 취소하면 None이므로 기존 폴더를 그대로 유지
+            if let Some(folder) = rfd::FileDialog::new()
+                .set_directory(&self.folder)
+                .pick_folder()
+            {
+                // 받는 위치만 바꾸고 재생목록은 그대로
+                self.folder = folder;
             }
-            ui.label(tr!("다운로드 폴더", "Download folder"));
-            // 경로가 한 줄보다 길면 줄을 바꿔서 전부 보여주기
-            let path = self.folder.display().to_string();
-            ui.add(egui::Label::new(egui::RichText::new(path).weak()).wrap());
-        });
+        }
+
+        // 셋째 줄: 주소, 형식, 폴더를 확인한 뒤 누르는 저장 버튼
+        ui.add_space(4.0);
+        let label = tr!("저장하기", "Save");
+        let width = ui.available_width();
+        clicked |= icons::primary_button(ui, Icon::Download, label, has_url, width).clicked();
 
         if clicked || (entered && has_url) {
             self.start_download(ui.ctx().clone());
@@ -1879,6 +1875,57 @@ fn popup_frame(ui: &egui::Ui) -> egui::Frame {
         .fill(colors.shade(0.08))
         .stroke(egui::Stroke::new(2.0, colors.point))
         .inner_margin(14)
+}
+
+// 줄 전체가 버튼인 다운로드 폴더 줄. 누르면 true
+fn folder_button(ui: &mut egui::Ui, folder: &Path) -> bool {
+    let builder = egui::UiBuilder::new()
+        .id_salt("download-folder")
+        .sense(egui::Sense::click());
+    let row = ui.scope_builder(builder, |ui| {
+        // 글자를 선택하는 기능이 클릭을 가로채지 않게 끄기
+        ui.style_mut().interaction.selectable_labels = false;
+        let colors = theme::palette(ui);
+        let (fill, line) = if ui.response().contains_pointer() && ui.is_enabled() {
+            (colors.veil(0.07), colors.point)
+        } else {
+            (egui::Color32::TRANSPARENT, colors.shade(0.18))
+        };
+
+        egui::Frame::new()
+            .fill(fill)
+            .stroke(egui::Stroke::new(1.0, line))
+            .corner_radius(8)
+            .inner_margin(egui::Margin::symmetric(10, 4))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.set_width(ui.available_width());
+                    icons::symbol(ui, Icon::Folder);
+
+                    // 경로가 길면 "변경"의 자리를 남기고 줄 바꿈
+                    let width = ui.available_width() - 60.0;
+                    ui.vertical(|ui| {
+                        ui.set_width(width);
+                        ui.add_space(5.0);
+                        let path = egui::RichText::new(folder.display().to_string()).weak();
+                        ui.add(egui::Label::new(path).wrap());
+                        ui.add_space(2.0);
+                    });
+                    let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+                    ui.with_layout(right_to_left, |ui| {
+                        let change = egui::RichText::new(tr!("변경", "Change"))
+                            .size(12.0)
+                            .color(colors.point);
+                        ui.label(change);
+                    });
+                });
+            });
+    });
+
+    row.response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(tr!("다운로드 폴더 변경", "Change download folder"))
+        .clicked()
 }
 
 // 재생목록이 비었을 때의 안내
