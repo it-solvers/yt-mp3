@@ -5,7 +5,10 @@
 #[macro_use]
 mod lang;
 
+mod icons;
+
 use eframe::egui;
+use icons::Icon;
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -53,6 +56,9 @@ const ACCENT: egui::Color32 = egui::Color32::from_rgb(22, 128, 118);
 // 어두운 화면과 밝은 화면 모두에 청록색 강조색 적용
 fn apply_theme(ctx: &egui::Context) {
     ctx.all_styles_mut(|style| {
+        // 줄의 기본 높이를 아이콘 버튼에 맞춰서 글자와 버튼의 세로 위치를 가지런히 하기
+        style.spacing.interact_size.y = 28.0;
+
         // bg는 선택 영역, 진행률, slider의 채움색. fg는 그 위의 글자와 입력창 테두리
         let (bg, fg) = if style.visuals.dark_mode {
             (ACCENT, egui::Color32::from_rgb(190, 250, 240))
@@ -302,29 +308,20 @@ impl App {
         let mut stop = false;
         ui.horizontal(|ui| {
             if playing.player.is_paused() {
-                if ui
-                    .button(symbol("►"))
-                    .on_hover_text(tr!("계속 재생", "Resume"))
-                    .clicked()
-                {
+                if icons::button(ui, Icon::Play, tr!("계속 재생", "Resume")).clicked() {
                     playing.player.play();
                 }
-            } else if ui
-                .button(symbol("‖"))
-                .on_hover_text(tr!("일시정지", "Pause"))
-                .clicked()
-            {
+            } else if icons::button(ui, Icon::Pause, tr!("일시정지", "Pause")).clicked() {
                 playing.player.pause();
             }
-            stop = ui
-                .button(symbol("■"))
-                .on_hover_text(tr!("정지", "Stop"))
-                .clicked();
+            stop = icons::button(ui, Icon::Stop, tr!("정지", "Stop")).clicked();
 
             // 음량은 오른쪽 끝에 두고, 곡 이름은 남은 공간에 표시
             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
             ui.with_layout(right_to_left, |ui| {
                 ui.spacing_mut().slider_width = 80.0;
+                // 손잡이가 너무 커지지 않도록 slider는 낮게
+                ui.spacing_mut().interact_size.y = 18.0;
                 let percent = self.volume * 100.0;
                 let slider = egui::Slider::new(&mut self.volume, 0.0..=1.0)
                     .show_value(false)
@@ -336,7 +333,7 @@ impl App {
                 {
                     playing.player.set_volume(self.volume);
                 }
-                ui.label(tr!("음량", "Volume"));
+                icons::picture(ui, Icon::Speaker, tr!("음량", "Volume"));
 
                 let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
                 ui.with_layout(left_to_right, |ui| {
@@ -346,6 +343,7 @@ impl App {
             });
         });
 
+        ui.spacing_mut().interact_size.y = 18.0;
         ui.horizontal(|ui| {
             let position = playing.player.get_pos();
 
@@ -433,16 +431,11 @@ impl App {
         let row = egui::vec2(ui.available_width(), 32.0);
         let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
         ui.allocate_ui_with_layout(row, right_to_left, |ui| {
-            let label = egui::RichText::new(tr!("저장하기", "Save"))
-                .strong()
-                .color(egui::Color32::WHITE);
-            let button = egui::Button::new(label)
-                .fill(ACCENT)
-                .min_size(egui::vec2(88.0, 32.0));
-            clicked = ui.add_enabled(has_url, button).clicked();
+            let label = tr!("저장하기", "Save");
+            clicked = icons::primary_button(ui, Icon::Download, label, ACCENT, has_url).clicked();
 
             // 지원 사이트 안내는 마우스를 올렸을 때만 보여주기
-            ui.button("?").on_hover_text(supported_sites());
+            icons::button(ui, Icon::Help, supported_sites());
 
             let input = ui.add(
                 egui::TextEdit::singleline(&mut self.url)
@@ -470,7 +463,8 @@ impl App {
 
             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
             ui.with_layout(right_to_left, |ui| {
-                if ui.button(tr!("폴더 변경", "Change folder")).clicked() {
+                let change = tr!("저장 폴더 변경", "Change folder");
+                if icons::button(ui, Icon::Folder, change).clicked() {
                     // 취소하면 None이므로 기존 폴더를 그대로 유지
                     if let Some(folder) = rfd::FileDialog::new()
                         .set_directory(&self.folder)
@@ -529,11 +523,7 @@ impl App {
 
             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
             ui.with_layout(right_to_left, |ui| {
-                if ui
-                    .button(symbol("↻"))
-                    .on_hover_text(tr!("새로고침", "Refresh"))
-                    .clicked()
-                {
+                if icons::button(ui, Icon::Refresh, tr!("새로고침", "Refresh")).clicked() {
                     self.refresh_files();
                 }
                 ui.checkbox(
@@ -562,17 +552,14 @@ impl App {
                         } else {
                             tr!("재생", "Play")
                         };
-                        if ui.button(symbol("►")).on_hover_text(hint).clicked() {
+                        if icons::button(ui, Icon::Play, hint).clicked() {
                             clicked = Some(path.clone());
                         }
                         // 삭제 버튼은 재생 버튼과 헷갈리지 않도록 오른쪽 끝에 배치
                         let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
                         ui.with_layout(right_to_left, |ui| {
-                            if ui
-                                .button(symbol("×"))
-                                .on_hover_text(tr!("삭제", "Delete"))
-                                .clicked()
-                            {
+                            let delete = tr!("삭제", "Delete");
+                            if icons::button(ui, Icon::Trash, delete).clicked() {
                                 to_delete = Some(path.clone());
                             }
                             // 파일 이름은 남은 공간에 왼쪽부터 표시
@@ -580,7 +567,7 @@ impl App {
                             ui.with_layout(left_to_right, |ui| {
                                 // 파일 이름이 줄어도 동영상인지 알 수 있게 표시
                                 if video {
-                                    ui.label(egui::RichText::new(tr!("[영상]", "[Video]")).weak());
+                                    icons::picture(ui, Icon::Video, tr!("동영상", "Video"));
                                 }
                                 let mut name = egui::RichText::new(file_name(path));
                                 // 재생 중인 곡은 강조색으로 표시
@@ -731,7 +718,9 @@ impl eframe::App for App {
 
         // 재생 중일 때만 보이는 재생 bar
         if self.playing.is_some() {
-            egui::Panel::bottom("player").show(ui, |ui| self.player_bar(ui));
+            egui::Panel::bottom("player")
+                .default_size(56.0)
+                .show(ui, |ui| self.player_bar(ui));
         }
 
         // 삭제 결과 등의 안내는 분리선 위에 표시
@@ -1062,12 +1051,6 @@ fn next_file(files: &[PathBuf], current: &Path) -> Option<PathBuf> {
         .iter()
         .find(|path| !is_video(path))
         .cloned()
-}
-
-// 버튼에 쓸 특수문자.
-// 고정폭 글꼴(Hack)로 그려야 이모지 모양이 아닌 글자 모양으로 나옴
-fn symbol(text: &str) -> egui::RichText {
-    egui::RichText::new(text).monospace()
 }
 
 // 시간을 "분:초" 모양으로 바꾸기
