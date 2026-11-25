@@ -1204,6 +1204,14 @@ impl App {
         move_item(&mut self.files, from, to);
     }
 
+    // 편집 모드 시작. 목록을 고치는 동안에는 재생을 일시정지
+    fn start_editing(&mut self) {
+        if let Some(playing) = &self.playing {
+            playing.player.pause();
+        }
+        self.selected = Some(HashSet::new());
+    }
+
     // 목록의 제목 줄. 편집 중일 때는 전체 선택, 빼기, 삭제, 완료 버튼을 보여줌
     fn list_header(&mut self, ui: &mut egui::Ui) {
         let mut delete = None;
@@ -1228,7 +1236,7 @@ impl App {
                     );
                     ui.add_enabled_ui(!self.files.is_empty(), |ui| {
                         if icons::button(ui, Icon::Edit, hint).clicked() {
-                            self.selected = Some(HashSet::new());
+                            self.start_editing();
                         }
                     });
                     return;
