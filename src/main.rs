@@ -354,12 +354,26 @@ impl App {
 
     // 함께 설치한 오픈소스 license 문서 열기
     fn open_licenses(&mut self) {
-        let Some(path) = notices_path() else {
-            self.notice = tr!(
-                "라이선스 문서는 설치한 프로그램에서 볼 수 있어요",
-                "The license document is available in the installed app",
-            );
-            return;
+        // 개발 중(cargo run)에는 설치된 문서가 없으므로 그 자리에서 만들기
+        #[cfg(debug_assertions)]
+        let found = notices_path().map_or_else(make_dev_notices, Ok);
+        #[cfg(not(debug_assertions))]
+        let found = notices_path().ok_or_else(|| {
+            tr!(
+                "라이선스 문서를 찾을 수 없어요",
+                "the license document was not found",
+            )
+        });
+
+        let path = match found {
+            Ok(path) => path,
+            Err(e) => {
+                self.notice = tr!(
+                    "오류: 라이선스 문서를 열 수 없어요: {e}",
+                    "Error: cannot open the license document: {e}",
+                );
+                return;
+            }
         };
         if let Err(e) = open::that_detached(path) {
             self.notice = tr!(
@@ -852,6 +866,29 @@ fn notices_path() -> Option<PathBuf> {
         .iter()
         .map(|place| folder.join(place).join("THIRD-PARTY-NOTICES.txt"))
         .find(|path| path.is_file())
+}
+
+// 개발용: scripts/make_notices.py를 실행해서 target 폴더에 license 문서 만들기.
+// 함께 담는 도구(ffmpeg 등)의 license는 설치 파일에만 들어감
+#[cfg(debug_assertions)]
+fn make_dev_notices() -> Result<PathBuf, String> {
+    let project = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let path = project.join("target/notices/THIRD-PARTY-NOTICES.txt");
+    let python = if cfg!(windows) { "python" } else { "python3" };
+
+    let output = Command::new(python)
+        .arg("-I")
+        .arg(project.join("scripts/make_notices.py"))
+        .arg(&path)
+        .output()
+        .map_err(|e| tr!("python을 실행할 수 없어요: {e}", "cannot run python: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(stderr.lines().last().unwrap_or_default().to_string());
+    }
+
+    Ok(path)
 }
 
 // 파일의 확장자가 주어진 것과 같은지 (대소문자 구분 없음)

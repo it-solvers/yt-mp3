@@ -3,6 +3,7 @@
 
 사용법: python3 -I scripts/make_notices.py 출력파일 --target TARGET
         [--section "제목" 파일 [파일 ...]] ...
+--target을 생략하면 이 컴퓨터용으로 만듦.
 
 --section은 함께 담는 외부 도구처럼 Rust library가 아닌 항목을 추가할 때 사용.
 """
@@ -23,6 +24,18 @@ def read(path):
 
 def title(text):
     return f"\n\n{LINE}\n{text}\n{LINE}\n"
+
+
+def host_target():
+    """이 컴퓨터의 target 이름."""
+    output = subprocess.run(
+        ["rustc", "-vV"], check=True, capture_output=True, text=True
+    ).stdout
+    return next(
+        line.removeprefix("host: ")
+        for line in output.splitlines()
+        if line.startswith("host: ")
+    )
 
 
 def packages(target):
@@ -89,7 +102,7 @@ def rust_section(target):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("output")
-    parser.add_argument("--target", required=True)
+    parser.add_argument("--target")
     parser.add_argument("--section", nargs="+", action="append", default=[])
     args = parser.parse_args()
 
@@ -104,7 +117,7 @@ def main():
         document += title(heading)
         for file in files:
             document += f"\n{read(file)}\n"
-    document += rust_section(args.target)
+    document += rust_section(args.target or host_target())
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
