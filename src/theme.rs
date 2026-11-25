@@ -17,13 +17,13 @@ pub struct Palette {
     pub edge: Color32,
 }
 
-// 어두운 화면: 남색 바탕과 하늘 파랑
+// 어두운 화면: 완전한 검정 바탕과 하늘 파랑
 const DARK: Palette = Palette {
-    base: Color32::from_rgb(21, 27, 43),
-    ink: Color32::from_rgb(232, 236, 245),
+    base: Color32::BLACK,
+    ink: Color32::from_rgb(236, 236, 238),
     point: Color32::from_rgb(90, 169, 255),
-    on_point: Color32::from_rgb(6, 24, 46),
-    edge: Color32::from_rgb(35, 44, 69),
+    on_point: Color32::from_rgb(0, 14, 30),
+    edge: Color32::from_rgb(20, 20, 22),
 };
 
 // 밝은 화면: 흰 바탕에 남색 글자
