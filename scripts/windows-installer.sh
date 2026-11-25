@@ -49,10 +49,22 @@ fetch yt-dlp.sums "$ytdlp/SHA2-256SUMS"
 verify "$downloads/yt-dlp.exe" \
     "$(awk '$2 == "yt-dlp.exe" { print $1 }' "$downloads/yt-dlp.sums")"
 
-ffmpeg="https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-fetch ffmpeg.zip "$ffmpeg"
-fetch ffmpeg.sums "$ffmpeg.sha256"
-verify "$downloads/ffmpeg.zip" "$(first_hash "$downloads/ffmpeg.sums")"
+# ffmpeg는 gyan.dev 제작자의 GitHub 배포 저장소에서 받기.
+# 파일 주소와 SHA-256은 GitHub의 release 정보에서 가져옴
+fetch ffmpeg.json "https://api.github.com/repos/GyanD/codexffmpeg/releases/latest"
+asset=$(python3 -I -c '
+import json, sys
+
+for asset in json.load(open(sys.argv[1]))["assets"]:
+    if asset["name"].endswith("-essentials_build.zip"):
+        print(asset["browser_download_url"], asset["digest"])
+' "$downloads/ffmpeg.json")
+if [ -z "$asset" ]; then
+    echo "오류: ffmpeg 다운로드 주소를 찾지 못했어요" >&2
+    exit 1
+fi
+fetch ffmpeg.zip "${asset%% *}"
+verify "$downloads/ffmpeg.zip" "${asset##*sha256:}"
 
 deno="https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip"
 fetch deno.zip "$deno"
