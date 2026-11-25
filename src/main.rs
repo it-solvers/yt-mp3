@@ -346,7 +346,7 @@ impl eframe::App for App {
         // 화면 하단의 저작권 정보. 남은 공간을 쓰는 CentralPanel보다 먼저 배치
         egui::Panel::bottom("copyright").show(ui, |ui| {
             ui.vertical_centered(|ui| {
-                ui.label(egui::RichText::new(COPYRIGHT).small().weak());
+                ui.label(egui::RichText::new(COPYRIGHT).size(11.0).weak());
             });
         });
 
