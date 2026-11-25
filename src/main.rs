@@ -120,6 +120,8 @@ struct App {
     notice: String,
     // 다운로드 실패 팝업이 열려 있으면 Some
     failure: Option<Failure>,
+    // 저장 완료 팝업이 열려 있으면 Some(받은 파일들)
+    saved: Option<Vec<PathBuf>>,
     // 고른 화면 색
     colors: theme::Choice,
     // 색상 선택 팝업이 열려 있는지
@@ -252,6 +254,7 @@ impl App {
             status: String::new(),
             notice: String::new(),
             failure: None,
+            saved: None,
             colors: theme::Choice {
                 preset: saved("color_preset")
                     .and_then(|v| v.parse().ok())
@@ -374,6 +377,45 @@ impl App {
                 self.open_licenses();
             }
         });
+    }
+
+    // 저장 완료 팝업: 받은 파일의 이름과 위치
+    fn saved_dialog(&mut self, ui: &mut egui::Ui) {
+        let Some(files) = &self.saved else {
+            return;
+        };
+        let folder = &self.folder;
+        let title = tr!("저장 완료!", "Saved!");
+        let closed = dialog(
+            ui,
+            "saved",
+            &title,
+            |ui| {
+                egui::Frame::new()
+                    .fill(theme::palette(ui).shade(0.14))
+                    .corner_radius(8)
+                    .inner_margin(10)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        for path in files {
+                            let strong = ui.visuals().strong_text_color();
+                            let name = egui::RichText::new(file_name(path)).color(strong);
+                            ui.add(egui::Label::new(name).wrap());
+                        }
+                        // 받은 파일의 위치. 파일 이름을 알 수 없으면 다운로드 폴더
+                        let place = files
+                            .first()
+                            .map_or_else(|| folder.display().to_string(), |path| location(path));
+                        let place = tr!("위치: {place}", "Location: {place}");
+                        let place = egui::RichText::new(place).size(11.0).weak();
+                        ui.add(egui::Label::new(place).wrap());
+                    });
+            },
+            |_| {},
+        );
+        if closed {
+            self.saved = None;
+        }
     }
 
     // 다운로드 실패 팝업: 오류 내용과 지원 사이트
@@ -1443,12 +1485,12 @@ impl App {
                         ),
                     };
                 }
+                // 완료와 실패는 상태 줄 대신 팝업으로 알려주기
                 Ok(Update::Done(Ok(paths))) => {
-                    downloaded = paths;
-                    let folder = self.folder.display();
-                    break tr!("저장 완료! 위치: {folder}", "Saved to: {folder}");
+                    downloaded = paths.clone();
+                    self.saved = Some(paths);
+                    break String::new();
                 }
-                // 실패는 상태 줄 대신 팝업으로 알려주기
                 Ok(Update::Done(Err(reason))) => {
                     self.failure = Some(Failure {
                         reason,
@@ -1538,6 +1580,7 @@ impl eframe::App for App {
         self.about_dialog(ui);
         self.color_dialog(ui);
         self.failure_dialog(ui);
+        self.saved_dialog(ui);
         // 파일을 창 위로 끌어 오면 안내 보여주기
         if ui.input(|i| !i.raw.hovered_files.is_empty()) {
             drop_overlay(ui);
