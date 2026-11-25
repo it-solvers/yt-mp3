@@ -501,12 +501,15 @@ fn tool_path() -> OsString {
     let current = std::env::var_os("PATH").unwrap_or_default();
     let mut folders = Vec::new();
 
-    // 1. 프로그램과 함께 설치한 도구 (Windows 설치 파일의 tools 폴더).
+    // 1. 프로그램과 함께 설치한 도구.
     //    PC에 다른 버전이 있어도 함께 설치한 것을 먼저 사용
     if let Ok(exe) = std::env::current_exe()
         && let Some(folder) = exe.parent()
     {
+        // Windows: 실행 파일 옆의 tools 폴더
         folders.push(folder.join("tools"));
+        // Mac: .app 안의 Contents/Resources/tools 폴더
+        folders.push(folder.join("../Resources/tools"));
     }
 
     // 2. 원래의 PATH
