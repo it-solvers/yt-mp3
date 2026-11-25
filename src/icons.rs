@@ -3,8 +3,8 @@
 // 이미지 파일 없이 도형으로 그려서 어떤 크기에서도 선명함
 
 use eframe::egui::{
-    Color32, CornerRadius, Painter, Pos2, Rect, Response, Role, Sense, Shape, Stroke, Ui, Vec2,
-    WidgetInfo, pos2, vec2,
+    Color32, CornerRadius, CursorIcon, Painter, Pos2, Rect, Response, Role, Sense, Shape, Stroke,
+    Ui, Vec2, WidgetInfo, pos2, vec2,
 };
 
 #[derive(Clone, Copy)]
@@ -53,6 +53,32 @@ pub fn button(ui: &mut Ui, icon: Icon, label: String) -> Response {
     }
 
     response.on_hover_text(label)
+}
+
+// 입력창 안에 올려놓는 지우기(×) 버튼. rect 위치에 그림
+pub fn clear_button(ui: &mut Ui, rect: Rect, label: String) -> Response {
+    let response = ui.interact(rect, ui.scope_id().with("clear"), Sense::click());
+    describe(&response, ui, &label);
+
+    // 평소에는 흐리게, 마우스를 올리면 둥근 배경과 함께 진하게
+    let color = if response.hovered() {
+        let (background, _) = neutral(ui);
+        ui.painter()
+            .circle_filled(rect.center(), rect.width() / 2.0, background);
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let cross = rect.shrink(rect.width() * 0.32);
+    let stroke = Stroke::new(1.8, color);
+    ui.painter()
+        .line_segment([cross.left_top(), cross.right_bottom()], stroke);
+    ui.painter()
+        .line_segment([cross.right_top(), cross.left_bottom()], stroke);
+
+    response
+        .on_hover_cursor(CursorIcon::PointingHand)
+        .on_hover_text(label)
 }
 
 // 설명용 그림 (누를 수 없음)

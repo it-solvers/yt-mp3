@@ -450,13 +450,31 @@ impl App {
             let label = tr!("저장하기", "Save");
             clicked = icons::primary_button(ui, Icon::Download, label, has_url).clicked();
 
+            // 지울 내용이 있으면 지우기 버튼이 글자를 가리지 않게 오른쪽 여백 넓히기
+            let filled = !self.url.is_empty();
+            let margin = egui::Margin {
+                left: 8,
+                right: if filled { 32 } else { 8 },
+                top: 2,
+                bottom: 2,
+            };
             let input = ui.add(
                 egui::TextEdit::singleline(&mut self.url)
                     .hint_text(tr!("영상 URL 붙여넣기", "Paste a video URL"))
                     .desired_width(f32::INFINITY)
                     .min_size(egui::vec2(0.0, 32.0))
+                    .margin(margin)
                     .align(egui::Align2::LEFT_CENTER),
             );
+            if filled {
+                let center = egui::pos2(input.rect.right() - 16.0, input.rect.center().y);
+                let rect = egui::Rect::from_center_size(center, egui::Vec2::splat(22.0));
+                if icons::clear_button(ui, rect, tr!("내용 지우기", "Clear")).clicked() {
+                    self.url.clear();
+                    // 바로 새 주소를 붙여넣을 수 있게 입력창 선택
+                    input.request_focus();
+                }
+            }
             // 입력창에서 Enter를 눌렀는지
             entered = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         });
