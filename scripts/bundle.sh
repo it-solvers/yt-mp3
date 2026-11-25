@@ -60,6 +60,11 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+# 오픈소스 license 문서 (설치 파일을 만들 때는 도구의 license까지 담아 다시 만듦)
+python3 -I scripts/make_notices.py \
+    "$app/Contents/Resources/licenses/THIRD-PARTY-NOTICES.txt" \
+    --target "$(rustc -vV | sed -n 's/^host: //p')"
+
 # 언어별 앱 이름. 언어 폴더가 있어야 폴더 선택 창 같은 macOS 화면도 해당 언어로 표시됨
 # 사용법: localize 언어 이름
 localize() {

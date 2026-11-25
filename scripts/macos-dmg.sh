@@ -83,10 +83,46 @@ unzip -q -j "$downloads/deno.zip" deno -d "$tools"
 cp "$downloads/yt-dlp_macos" "$tools/yt-dlp"
 chmod +x "$tools/yt-dlp" "$tools/ffmpeg" "$tools/ffprobe" "$tools/deno"
 
+# 담은 도구의 license 문서와 source 위치 모으기
 fetch gpl-3.0.txt "https://www.gnu.org/licenses/gpl-3.0.txt"
-cp "$downloads/gpl-3.0.txt" "$licenses/ffmpeg-LICENSE.txt"
-echo "ffmpeg, ffprobe from $site (source: https://ffmpeg.org)" \
-    > "$licenses/ffmpeg-README.txt"
+
+ytdlp_version=$("$tools/yt-dlp" --version)
+ytdlp_raw="https://raw.githubusercontent.com/yt-dlp/yt-dlp/$ytdlp_version"
+fetch yt-dlp-LICENSE.txt "$ytdlp_raw/LICENSE"
+fetch yt-dlp-THIRD-PARTY.txt "$ytdlp_raw/THIRD_PARTY_LICENSES.txt"
+cat > "$downloads/yt-dlp-info.txt" <<INFO
+The bundled executable contains GPLv3+ components, so it is distributed
+under GPL-3.0-or-later (full text in the ffmpeg section).
+Binary: https://github.com/yt-dlp/yt-dlp/releases/tag/$ytdlp_version
+Source: https://github.com/yt-dlp/yt-dlp/releases/download/$ytdlp_version/yt-dlp.tar.gz
+INFO
+
+"$tools/ffmpeg" -version > "$downloads/ffmpeg-version.txt"
+ffmpeg_version=$(sed -n '1s/^ffmpeg version \([0-9.]*\).*/\1/p' "$downloads/ffmpeg-version.txt")
+cat > "$downloads/ffmpeg-info.txt" <<INFO
+ffmpeg and ffprobe are distributed under GPL-3.0-or-later.
+Binary: $site
+Source: https://ffmpeg.org/releases/ffmpeg-$ffmpeg_version.tar.xz
+Build script (lists the linked libraries and their sources):
+https://git.martin-riedl.de/ffmpeg/build-script
+
+Build information:
+INFO
+
+deno_version=$("$tools/deno" --version | sed -n '1s/^deno \([0-9.]*\).*/\1/p')
+fetch deno-LICENSE.md "https://raw.githubusercontent.com/denoland/deno/v$deno_version/LICENSE.md"
+cat > "$downloads/deno-info.txt" <<INFO
+MIT License. Deno also includes third-party components such as V8.
+Source: https://github.com/denoland/deno/tree/v$deno_version
+INFO
+
+python3 -I scripts/make_notices.py "$licenses/THIRD-PARTY-NOTICES.txt" \
+    --target aarch64-apple-darwin \
+    --section "ffmpeg, ffprobe $ffmpeg_version" "$downloads/ffmpeg-info.txt" \
+        "$downloads/ffmpeg-version.txt" "$downloads/gpl-3.0.txt" \
+    --section "yt-dlp $ytdlp_version" "$downloads/yt-dlp-info.txt" \
+        "$downloads/yt-dlp-LICENSE.txt" "$downloads/yt-dlp-THIRD-PARTY.txt" \
+    --section "deno $deno_version" "$downloads/deno-info.txt" "$downloads/deno-LICENSE.md"
 
 # 파일을 추가했으므로 다시 서명하고 확인
 # (함께 담은 도구는 배포처의 서명을 그대로 유지)

@@ -352,6 +352,23 @@ impl App {
         }
     }
 
+    // 함께 설치한 오픈소스 license 문서 열기
+    fn open_licenses(&mut self) {
+        let Some(path) = notices_path() else {
+            self.notice = tr!(
+                "라이선스 문서는 설치한 프로그램에서 볼 수 있어요",
+                "The license document is available in the installed app",
+            );
+            return;
+        };
+        if let Err(e) = open::that_detached(path) {
+            self.notice = tr!(
+                "오류: 라이선스 문서를 열 수 없어요: {e}",
+                "Error: cannot open the license document: {e}",
+            );
+        }
+    }
+
     // 확인을 받은 뒤 파일을 휴지통으로 옮기기
     fn delete(&mut self, path: PathBuf) {
         let name = file_name(&path);
@@ -565,6 +582,10 @@ impl eframe::App for App {
         egui::Panel::bottom("copyright").show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.label(egui::RichText::new(copyright()).size(11.0).weak());
+                let licenses = tr!("오픈소스 라이선스", "Open source licenses");
+                if ui.link(egui::RichText::new(licenses).size(11.0)).clicked() {
+                    self.open_licenses();
+                }
             });
         });
 
@@ -820,6 +841,17 @@ fn tool_path() -> OsString {
     folders.push(PathBuf::from("/usr/local/bin"));
 
     std::env::join_paths(folders).unwrap_or(current)
+}
+
+// 설치한 프로그램에 들어 있는 license 문서의 위치. 없으면 None
+fn notices_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let folder = exe.parent()?;
+    // Windows는 실행 파일 옆, Mac은 .app 안의 Contents/Resources
+    ["licenses", "../Resources/licenses"]
+        .iter()
+        .map(|place| folder.join(place).join("THIRD-PARTY-NOTICES.txt"))
+        .find(|path| path.is_file())
 }
 
 // 파일의 확장자가 주어진 것과 같은지 (대소문자 구분 없음)
