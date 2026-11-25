@@ -736,25 +736,24 @@ impl App {
             egui::Popup::from_toggle_button_response(&link)
                 .frame(frame)
                 .show(supported_sites);
+        });
 
-            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
-            ui.with_layout(right_to_left, |ui| {
-                let change = tr!("저장 폴더 변경", "Change folder");
-                if icons::button(ui, Icon::Folder, change).clicked() {
-                    // 취소하면 None이므로 기존 폴더를 그대로 유지
-                    if let Some(folder) = rfd::FileDialog::new()
-                        .set_directory(&self.folder)
-                        .pick_folder()
-                    {
-                        self.folder = folder;
-                        self.refresh_files();
-                    }
+        // 저장 폴더는 경로가 다 보이도록 한 줄을 따로 사용
+        ui.horizontal(|ui| {
+            let change = tr!("저장 폴더 변경", "Change folder");
+            if icons::button(ui, Icon::Folder, change).clicked() {
+                // 취소하면 None이므로 기존 폴더를 그대로 유지
+                if let Some(folder) = rfd::FileDialog::new()
+                    .set_directory(&self.folder)
+                    .pick_folder()
+                {
+                    self.folder = folder;
+                    self.refresh_files();
                 }
-                // 경로가 길면 줄이고, 마우스를 올리면 전체 경로 보여주기
-                let path = self.folder.display().to_string();
-                ui.add(egui::Label::new(egui::RichText::new(&path).weak()).truncate())
-                    .on_hover_text(path);
-            });
+            }
+            // 경로가 한 줄보다 길면 줄을 바꿔서 전부 보여주기
+            let path = self.folder.display().to_string();
+            ui.add(egui::Label::new(egui::RichText::new(path).weak()).wrap());
         });
 
         if clicked || (entered && has_url) {
