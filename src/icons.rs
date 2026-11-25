@@ -115,25 +115,14 @@ pub fn file_button(ui: &mut Ui, kind: Icon, paused: Option<bool>, label: String)
             };
             ui.painter().rect_filled(rect, radius, fill);
             paint(ui.painter(), rect.shrink(7.0), glyph, colors.on_point, fill);
-        } else if matches!(kind, Icon::Video) {
-            // 동영상 파일: 밝게 채운 칸에 재생 삼각형
-            let fill = colors.shade(0.85);
-            ui.painter().rect_filled(rect, radius, fill);
-            paint(
-                ui.painter(),
-                rect.shrink(8.0),
-                Icon::Play,
-                colors.base,
-                fill,
-            );
         } else {
-            // 소리 파일: 테두리만 있는 칸에 음표
+            // 평소: 테두리만 있는 칸에 파일 종류 (음표 또는 필름)
             let line = Stroke::new(1.5, colors.shade(0.35));
             ui.painter()
                 .rect_stroke(rect, radius, line, StrokeKind::Inside);
             paint(
                 ui.painter(),
-                rect.shrink(7.0),
+                rect.shrink(6.0),
                 kind,
                 colors.ink,
                 colors.base,
@@ -313,12 +302,20 @@ fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32, background: 
             painter.circle_filled(at(0.78, 0.72), rect.width() * 0.18, color);
         }
         Icon::Video => {
-            block(0.00, 0.10, 1.00, 0.90, 4);
-            // 가운데의 재생 삼각형은 배경색으로 파내기
-            fill(
-                vec![at(0.36, 0.28), at(0.72, 0.50), at(0.36, 0.72)],
-                background,
-            );
+            // 필름: 몸체에 양옆의 구멍과 가운데 칸 구분선을 배경색으로 파내기
+            block(0.02, 0.04, 0.98, 0.96, 2);
+            let cut_out = |x1: f32, y1: f32, x2: f32, y2: f32| {
+                painter.rect_filled(
+                    Rect::from_min_max(at(x1, y1), at(x2, y2)),
+                    CornerRadius::ZERO,
+                    background,
+                );
+            };
+            for y in [0.13, 0.42, 0.71] {
+                cut_out(0.09, y, 0.21, y + 0.16);
+                cut_out(0.79, y, 0.91, y + 0.16);
+            }
+            cut_out(0.30, 0.45, 0.70, 0.55);
         }
     }
 }
