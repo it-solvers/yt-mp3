@@ -297,8 +297,11 @@ impl App {
             return;
         };
 
-        // slider의 채워진 부분은 진한 강조색
-        ui.visuals_mut().selection.bg_fill = theme::palette(ui).point;
+        // slider의 채워진 부분은 진한 강조색, 빈 부분은 바탕과 구별되는 색
+        let colors = theme::palette(ui);
+        ui.visuals_mut().selection.bg_fill = colors.point;
+        // 손잡이에도 쓰이는 색이므로 불투명하게
+        ui.visuals_mut().widgets.inactive.bg_fill = colors.edge.lerp_to_gamma(colors.ink, 0.2);
 
         let mut stop = false;
         ui.horizontal(|ui| {
@@ -765,30 +768,36 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let idle = self.job.is_none();
 
-        egui::Panel::top("title").show(ui, |ui| self.title_bar(ui));
+        egui::Panel::top("title")
+            .frame(edge_frame(ui))
+            .show(ui, |ui| self.title_bar(ui));
 
         // 아래쪽 영역은 나중에 배치한 것이 위에 놓임.
         // 남은 공간을 쓰는 CentralPanel보다 먼저 배치해야 함
 
         // 맨 아래: 저작권 정보와 license 링크
-        egui::Panel::bottom("copyright").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(copyright()).size(11.0).weak());
+        let frame = edge_frame(ui);
+        egui::Panel::bottom("copyright")
+            .frame(frame)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(copyright()).size(11.0).weak());
 
-                let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
-                ui.with_layout(right_to_left, |ui| {
-                    let licenses = tr!("오픈소스 라이선스", "Open source licenses");
-                    if ui.link(egui::RichText::new(licenses).size(11.0)).clicked() {
-                        self.open_licenses();
-                    }
+                    let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+                    ui.with_layout(right_to_left, |ui| {
+                        let licenses = tr!("오픈소스 라이선스", "Open source licenses");
+                        if ui.link(egui::RichText::new(licenses).size(11.0)).clicked() {
+                            self.open_licenses();
+                        }
+                    });
                 });
             });
-        });
 
         // 재생 중일 때만 보이는 재생 bar
         if self.playing.is_some() {
             egui::Panel::bottom("player")
                 .default_size(56.0)
+                .frame(edge_frame(ui))
                 .show(ui, |ui| self.player_bar(ui));
         }
 
@@ -1001,6 +1010,11 @@ fn tool_path() -> OsString {
     folders.push(PathBuf::from("/usr/local/bin"));
 
     std::env::join_paths(folders).unwrap_or(current)
+}
+
+// 헤더, 재생 bar, 푸터의 틀. 본문과 구별되는 바탕색 사용
+fn edge_frame(ui: &egui::Ui) -> egui::Frame {
+    egui::Frame::side_top_panel(ui.style()).fill(theme::palette(ui).edge)
 }
 
 // radio와 checkbox의 선택 표시는 강조색, 글자는 원래 색

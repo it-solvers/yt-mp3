@@ -31,16 +31,32 @@ pub fn button(ui: &mut Ui, icon: Icon, label: String) -> Response {
 
     if ui.is_rect_visible(rect) {
         let colors = palette(ui);
-        let (mut fill, glyph) = match icon {
+        let pressed = response.is_pointer_button_down_on();
+        let hovered = response.hovered();
+        let (fill, glyph) = match icon {
             // 재생 중임을 알리는 일시정지만 강조색
-            Icon::Pause => (colors.point, colors.on_point),
-            _ => (colors.shade(0.12), colors.ink),
+            Icon::Pause => {
+                let fill = if pressed {
+                    colors.point.lerp_to_gamma(colors.base, 0.2)
+                } else if hovered {
+                    colors.point.lerp_to_gamma(colors.ink, 0.15)
+                } else {
+                    colors.point
+                };
+                (fill, colors.on_point)
+            }
+            // 나머지는 반투명해서 헤더와 재생 bar 위에서도 구별됨
+            _ => {
+                let amount = if pressed {
+                    0.28
+                } else if hovered {
+                    0.20
+                } else {
+                    0.12
+                };
+                (colors.veil(amount), colors.ink)
+            }
         };
-        if response.is_pointer_button_down_on() {
-            fill = fill.lerp_to_gamma(colors.base, 0.2);
-        } else if response.hovered() {
-            fill = fill.lerp_to_gamma(colors.ink, 0.12);
-        }
         ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
         paint(ui.painter(), rect.shrink(7.0), icon, glyph, fill);
     }

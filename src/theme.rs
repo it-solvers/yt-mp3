@@ -13,6 +13,8 @@ pub struct Palette {
     pub point: Color32,
     // 강조색 위에 올리는 글자
     pub on_point: Color32,
+    // 헤더, 재생 bar, 푸터의 바탕. 바탕색보다 한 단계 구별되는 색
+    pub edge: Color32,
 }
 
 // 어두운 화면: 남색 바탕과 하늘 파랑
@@ -21,6 +23,7 @@ const DARK: Palette = Palette {
     ink: Color32::from_rgb(232, 236, 245),
     point: Color32::from_rgb(90, 169, 255),
     on_point: Color32::from_rgb(6, 24, 46),
+    edge: Color32::from_rgb(35, 44, 69),
 };
 
 // 밝은 화면: 흰 바탕에 남색 글자
@@ -29,12 +32,18 @@ const LIGHT: Palette = Palette {
     ink: Color32::from_rgb(28, 37, 64),
     point: Color32::from_rgb(47, 111, 228),
     on_point: Color32::WHITE,
+    edge: Color32::from_rgb(233, 237, 246),
 };
 
 impl Palette {
     // 바탕에 글자색을 amount(0.0 ~ 1.0)만큼 섞은 색
     pub fn shade(self, amount: f32) -> Color32 {
         self.base.lerp_to_gamma(self.ink, amount)
+    }
+
+    // 어떤 바탕 위에서도 보이도록 반투명하게 만든 글자색
+    pub fn veil(self, amount: f32) -> Color32 {
+        self.ink.gamma_multiply(amount)
     }
 
     // 바탕에 강조색을 섞은 색
