@@ -28,6 +28,8 @@ pub enum Icon {
     Info,
     // 언어 바꾸기
     Globe,
+    // 목록 편집
+    Edit,
     // 음표
     Music,
 }
@@ -143,6 +145,37 @@ fn place(ui: &mut Ui, rect: Rect, label: &str) -> Response {
     let response = ui.interact(rect, id, Sense::click());
     describe(&response, ui, label);
     response
+}
+
+// 편집 모드에서 줄 앞에 보여주는 선택 표시 (누르는 것은 줄 전체)
+pub fn check_mark(ui: &mut Ui, checked: bool) {
+    let (rect, _) = ui.allocate_exact_size(vec2(22.0, 28.0), Sense::hover());
+    let colors = palette(ui);
+    let center = rect.center();
+    if checked {
+        ui.painter().circle_filled(center, 10.0, colors.point);
+        let check = [vec2(-4.5, 0.0), vec2(-1.5, 3.5), vec2(5.0, -3.5)];
+        let points = check.iter().map(|&offset| center + offset).collect();
+        let line = Stroke::new(2.0, colors.on_point);
+        ui.painter().add(Shape::line(points, line));
+    } else {
+        let line = Stroke::new(1.5, colors.shade(0.45));
+        ui.painter().circle_stroke(center, 9.0, line);
+    }
+}
+
+// 편집 모드에서 줄 끝에 보여주는 손잡이. 줄을 끌어서 옮길 수 있다는 표시
+pub fn drag_handle(ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
+    let color = palette(ui).shade(0.55);
+    for offset in [-5.0, 0.0, 5.0] {
+        let y = rect.center().y + offset;
+        let line = [
+            pos2(rect.center().x - 8.0, y),
+            pos2(rect.center().x + 8.0, y),
+        ];
+        ui.painter().line_segment(line, Stroke::new(2.0, color));
+    }
 }
 
 // 설명용 그림 (누를 수 없음). 배경 없이 그려서 버튼과 구별
@@ -348,6 +381,19 @@ fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             });
             painter.add(Shape::line(meridian.collect(), line));
             painter.line_segment([at(0.02, 0.50), at(0.98, 0.50)], line);
+        }
+        Icon::Edit => {
+            // 비스듬한 연필
+            fill(
+                vec![
+                    at(0.68, 0.02),
+                    at(0.98, 0.32),
+                    at(0.40, 0.90),
+                    at(0.10, 0.60),
+                ],
+                color,
+            );
+            fill(vec![at(0.07, 0.68), at(0.32, 0.93), at(0.00, 1.00)], color);
         }
         Icon::Music => {
             // 두 음표를 잇는 막대, 기둥, 머리
