@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 
 cargo build --release
 
-app="target/release/bundle/DamaDama.app"
+app="target/release/bundle/JustGrab.app"
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
 
 rm -rf "$app"
@@ -35,9 +35,13 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>DamaDama</string>
+    <string>JustGrab</string>
     <key>CFBundleDisplayName</key>
-    <string>DamaDama</string>
+    <string>JustGrab</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>LSHasLocalizedDisplayName</key>
+    <true/>
     <key>CFBundleIdentifier</key>
     <string>local.yt-mp3</string>
     <key>CFBundleExecutable</key>
@@ -55,6 +59,18 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# 언어별 앱 이름. 언어 폴더가 있어야 폴더 선택 창 같은 macOS 화면도 해당 언어로 표시됨
+# 사용법: localize 언어 이름
+localize() {
+    mkdir -p "$app/Contents/Resources/$1.lproj"
+    cat > "$app/Contents/Resources/$1.lproj/InfoPlist.strings" <<STRINGS
+"CFBundleName" = "$2";
+"CFBundleDisplayName" = "$2";
+STRINGS
+}
+localize en "JustGrab"
+localize ko "걍담아"
 
 # 이 Mac에서 쓰기 위한 임시(ad-hoc) 서명
 codesign --force --sign - "$app"

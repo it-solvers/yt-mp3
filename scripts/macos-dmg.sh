@@ -17,7 +17,7 @@ fi
 work="$root/target/macos"
 downloads="$work/downloads"
 stage="$work/stage"
-app="$stage/DamaDama.app"
+app="$stage/JustGrab.app"
 tools="$app/Contents/Resources/tools"
 licenses="$app/Contents/Resources/licenses"
 
@@ -48,7 +48,7 @@ fetch() {
 # 항상 새로 받아서 최신 버전을 담기
 rm -rf "$downloads" "$stage"
 mkdir -p "$downloads" "$stage"
-cp -R "target/release/bundle/DamaDama.app" "$app"
+cp -R "target/release/bundle/JustGrab.app" "$app"
 mkdir -p "$tools" "$licenses"
 
 ytdlp="https://github.com/yt-dlp/yt-dlp/releases/latest/download"
@@ -85,7 +85,7 @@ chmod +x "$tools/yt-dlp" "$tools/ffmpeg" "$tools/ffprobe" "$tools/deno"
 
 fetch gpl-3.0.txt "https://www.gnu.org/licenses/gpl-3.0.txt"
 cp "$downloads/gpl-3.0.txt" "$licenses/ffmpeg-LICENSE.txt"
-echo "ffmpeg, ffprobe 배포처: $site (source: https://ffmpeg.org)" \
+echo "ffmpeg, ffprobe from $site (source: https://ffmpeg.org)" \
     > "$licenses/ffmpeg-README.txt"
 
 # 파일을 추가했으므로 다시 서명하고 확인
@@ -95,21 +95,33 @@ codesign --verify --strict "$app"
 
 # dmg를 열면 보이는 내용: 앱, Applications 바로 가기, 안내문
 ln -s /Applications "$stage/Applications"
-cat > "$stage/설치 안내.txt" <<'GUIDE'
+cat > "$stage/설치 안내 - Install Guide.txt" <<'GUIDE'
 설치 방법
-1. "DamaDama"를 Applications 폴더로 끌어다 놓으세요.
-2. Applications 폴더에서 "DamaDama"를 실행하세요.
+1. "JustGrab"(걍담아)을 Applications 폴더로 끌어다 놓으세요.
+2. Applications 폴더에서 실행하세요.
 
 "열 수 없다"는 경고가 나올 때
 Apple의 공증을 받지 않은 앱이라 처음 한 번은 직접 허용해야 해요.
 시스템 설정 > 개인정보 보호 및 보안에서 "그래도 열기"를 누르세요.
 
 Apple Silicon(M1 이후) Mac용입니다.
+
+--------------------------------------------------------------------
+
+How to install
+1. Drag "JustGrab" into the Applications folder.
+2. Open it from the Applications folder.
+
+If macOS says the app cannot be opened
+This app is not notarized by Apple, so you need to allow it once.
+Go to System Settings > Privacy & Security and click "Open Anyway".
+
+For Apple Silicon (M1 or later) Macs.
 GUIDE
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
-outfile="$work/DamaDama-$version-arm64.dmg"
+outfile="$work/JustGrab-$version-arm64.dmg"
 hdiutil create -quiet -ov -format UDZO \
-    -volname "DamaDama" -srcfolder "$stage" "$outfile"
+    -volname "JustGrab" -srcfolder "$stage" "$outfile"
 
 echo "완료: $outfile"

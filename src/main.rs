@@ -1,6 +1,10 @@
 // Windows 배포용 실행 파일은 뒤에 콘솔 창이 뜨지 않도록 설정
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+// tr! 매크로를 아래 코드에서 쓰려면 가장 먼저 선언해야 함
+#[macro_use]
+mod lang;
+
 use eframe::egui;
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use std::ffi::OsString;
@@ -13,6 +17,9 @@ use std::thread;
 use std::time::Duration;
 
 fn main() -> eframe::Result {
+    // 처음에는 시스템 언어를 따름. 사용자가 고른 언어가 있으면 App::new에서 바꿈
+    lang::set_korean(lang::system_is_korean());
+
     // 창과 Dock에 보일 아이콘. 지정하지 않으면 eframe 기본 아이콘이 쓰임
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
         .expect("프로그램에 포함한 아이콘은 올바른 PNG");
@@ -27,19 +34,39 @@ fn main() -> eframe::Result {
     };
 
     eframe::run_native(
-        "DamaDama",
+        &app_name(),
         options,
-        Box::new(|cc| Ok(Box::new(App::new(cc.storage)))),
+        Box::new(|cc| {
+            let app = App::new(cc.storage);
+            // 저장해 둔 언어에 맞게 창 제목 다시 설정
+            cc.egui_ctx
+                .send_viewport_cmd(egui::ViewportCommand::Title(app_name()));
+            Ok(Box::new(app))
+        }),
     )
 }
 
+fn app_name() -> String {
+    tr!("걍담아", "JustGrab")
+}
+
 // 화면 하단에 보여줄 저작권 정보
-const COPYRIGHT: &str = "© 2026 아이티해결단(이혁). All rights reserved.";
+fn copyright() -> String {
+    tr!(
+        "© 2026 아이티해결단(이혁). All rights reserved.",
+        "© 2026 ITSolvers(Hyeok Lee). All rights reserved.",
+    )
+}
 
 // URL 입력창 아래에 보여줄 안내. 실제 지원 범위는 yt-dlp에 따라 달라짐
-const SUPPORTED_SITES: &str = "\
-지원 사이트: YouTube, Instagram, TikTok, X, Facebook, Vimeo, SoundCloud 등
-YouTube 외에는 확인 전이며, 로그인이 필요하거나 비공개·DRM 콘텐츠는 받을 수 없어요";
+fn supported_sites() -> String {
+    tr!(
+        "지원 사이트: YouTube, Instagram, TikTok, X, Facebook, Vimeo, SoundCloud 등\n\
+         YouTube 외에는 확인 전이며, 로그인이 필요하거나 비공개·DRM 콘텐츠는 받을 수 없어요",
+        "Sites: YouTube, Instagram, TikTok, X, Facebook, Vimeo, SoundCloud and more\n\
+         Only YouTube is tested. Login-only, private, or DRM content is not supported",
+    )
+}
 
 // 화면이 기억해야 하는 값들
 struct App {
@@ -60,6 +87,8 @@ struct App {
     auto_next: bool,
     // 다운로드할 때 저장할 형식
     format: Format,
+    // 사용자가 언어를 직접 골랐는지. 고르지 않았으면 시스템 언어를 계속 따름
+    language_chosen: bool,
 }
 
 // 저장할 형식
@@ -122,6 +151,14 @@ impl App {
             _ => Format::Mp3,
         };
 
+        let language_chosen = match saved("language").as_deref() {
+            Some(language @ ("ko" | "en")) => {
+                lang::set_korean(language == "ko");
+                true
+            }
+            _ => false,
+        };
+
         let mut app = Self {
             url: String::new(),
             folder,
@@ -134,9 +171,37 @@ impl App {
             volume,
             auto_next,
             format,
+            language_chosen,
         };
         app.refresh_files();
         app
+    }
+
+    // 화면 상단의 언어 선택 버튼
+    fn language_bar(&mut self, ui: &mut egui::Ui) {
+        let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+        ui.with_layout(right_to_left, |ui| {
+            let korean = lang::is_korean();
+            // 오른쪽부터 배치하므로 English를 먼저 추가
+            if ui.selectable_label(!korean, "English").clicked() {
+                self.set_language(ui.ctx(), false);
+            }
+            if ui.selectable_label(korean, "한국어").clicked() {
+                self.set_language(ui.ctx(), true);
+            }
+        });
+    }
+
+    fn set_language(&mut self, ctx: &egui::Context, korean: bool) {
+        lang::set_korean(korean);
+        self.language_chosen = true;
+        // 이미 만들어 둔 안내 문구는 이전 언어이므로 지우기
+        // (다운로드 중의 상태는 다음 소식을 받을 때 새 언어로 바뀜)
+        if self.job.is_none() {
+            self.status.clear();
+        }
+        self.notice.clear();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(app_name()));
     }
 
     // 저장 폴더의 파일 목록 다시 읽기
@@ -145,7 +210,10 @@ impl App {
             Ok(files) => self.files = files,
             Err(e) => {
                 self.files.clear();
-                self.status = format!("오류: 폴더를 읽을 수 없어요: {e}");
+                self.status = tr!(
+                    "오류: 폴더를 읽을 수 없어요: {e}",
+                    "Error: cannot read the folder: {e}"
+                );
             }
         }
     }
@@ -158,7 +226,7 @@ impl App {
                 playing.player.set_volume(self.volume);
                 self.playing = Some(playing);
             }
-            Err(message) => self.status = format!("오류: {message}"),
+            Err(message) => self.status = tr!("오류: {message}", "Error: {message}"),
         }
     }
 
@@ -169,7 +237,10 @@ impl App {
             playing.player.pause();
         }
         if let Err(e) = open::that_detached(path) {
-            self.status = format!("오류: 동영상을 열 수 없어요: {e}");
+            self.status = tr!(
+                "오류: 동영상을 열 수 없어요: {e}",
+                "Error: cannot open the video: {e}"
+            );
         }
     }
 
@@ -193,7 +264,7 @@ impl App {
     // 재생 조작 부분: 음량, 자동 재생, 탐색 bar, 일시정지/정지 버튼
     fn player_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label("음량");
+            ui.label(tr!("음량", "Volume"));
             let slider = egui::Slider::new(&mut self.volume, 0.0..=1.0)
                 .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
                 .custom_parser(|text| {
@@ -205,7 +276,10 @@ impl App {
             {
                 playing.player.set_volume(self.volume);
             }
-            ui.checkbox(&mut self.auto_next, "다음 곡 자동 재생");
+            ui.checkbox(
+                &mut self.auto_next,
+                tr!("다음 곡 자동 재생", "Play next automatically"),
+            );
         });
 
         let Some(playing) = &mut self.playing else {
@@ -215,13 +289,24 @@ impl App {
         let mut stop = false;
         ui.horizontal(|ui| {
             if playing.player.is_paused() {
-                if ui.button(symbol("►")).on_hover_text("계속 재생").clicked() {
+                if ui
+                    .button(symbol("►"))
+                    .on_hover_text(tr!("계속 재생", "Resume"))
+                    .clicked()
+                {
                     playing.player.play();
                 }
-            } else if ui.button(symbol("‖")).on_hover_text("일시정지").clicked() {
+            } else if ui
+                .button(symbol("‖"))
+                .on_hover_text(tr!("일시정지", "Pause"))
+                .clicked()
+            {
                 playing.player.pause();
             }
-            stop = ui.button(symbol("■")).on_hover_text("정지").clicked();
+            stop = ui
+                .button(symbol("■"))
+                .on_hover_text(tr!("정지", "Stop"))
+                .clicked();
 
             ui.add(egui::Label::new(file_name(&playing.path)).truncate());
         });
@@ -257,7 +342,7 @@ impl App {
                 // 마우스를 놓았을 때 한 번만 이동하기
                 playing.seeking = None;
                 if let Err(e) = playing.player.try_seek(Duration::from_secs_f32(seconds)) {
-                    self.status = format!("오류: 이동할 수 없어요: {e}");
+                    self.status = tr!("오류: 이동할 수 없어요: {e}", "Error: cannot seek: {e}");
                 }
             }
         });
@@ -272,8 +357,11 @@ impl App {
         let name = file_name(&path);
         let answer = rfd::MessageDialog::new()
             .set_level(rfd::MessageLevel::Warning)
-            .set_title("파일 삭제")
-            .set_description(format!("이 파일을 휴지통으로 옮길까요?\n\n{name}"))
+            .set_title(tr!("파일 삭제", "Delete file"))
+            .set_description(tr!(
+                "이 파일을 휴지통으로 옮길까요?\n\n{name}",
+                "Move this file to the trash?\n\n{name}"
+            ))
             .set_buttons(rfd::MessageButtons::YesNo)
             .show();
         if answer != rfd::MessageDialogResult::Yes {
@@ -286,8 +374,8 @@ impl App {
         }
 
         self.notice = match move_to_trash(&path) {
-            Ok(()) => format!("휴지통으로 옮겼어요: {name}"),
-            Err(e) => format!("오류: 삭제할 수 없어요: {e}"),
+            Ok(()) => tr!("휴지통으로 옮겼어요: {name}", "Moved to trash: {name}"),
+            Err(e) => tr!("오류: 삭제할 수 없어요: {e}", "Error: cannot delete: {e}"),
         };
         self.refresh_files();
     }
@@ -295,8 +383,13 @@ impl App {
     // 저장된 mp3 목록 보여주기
     fn file_list(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(format!("저장된 목록 ({}개)", self.files.len()));
-            if ui.button(symbol("↻")).on_hover_text("새로고침").clicked() {
+            let count = self.files.len();
+            ui.label(tr!("저장된 목록 ({count}개)", "Saved files ({count})"));
+            if ui
+                .button(symbol("↻"))
+                .on_hover_text(tr!("새로고침", "Refresh"))
+                .clicked()
+            {
                 self.refresh_files();
             }
         });
@@ -316,9 +409,9 @@ impl App {
                     let is_current = self.playing.as_ref().is_some_and(|p| &p.path == path);
                     ui.horizontal(|ui| {
                         let hint = if video {
-                            "기본 player로 열기"
+                            tr!("기본 player로 열기", "Open in default player")
                         } else {
-                            "재생"
+                            tr!("재생", "Play")
                         };
                         if ui.button(symbol("►")).on_hover_text(hint).clicked() {
                             clicked = Some(path.clone());
@@ -326,7 +419,11 @@ impl App {
                         // 삭제 버튼은 재생 버튼과 헷갈리지 않도록 오른쪽 끝에 배치
                         let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
                         ui.with_layout(right_to_left, |ui| {
-                            if ui.button(symbol("×")).on_hover_text("삭제").clicked() {
+                            if ui
+                                .button(symbol("×"))
+                                .on_hover_text(tr!("삭제", "Delete"))
+                                .clicked()
+                            {
                                 to_delete = Some(path.clone());
                             }
                             // 파일 이름은 남은 공간에 왼쪽부터 표시
@@ -334,7 +431,7 @@ impl App {
                             ui.with_layout(left_to_right, |ui| {
                                 // 파일 이름이 줄어도 동영상인지 알 수 있게 표시
                                 if video {
-                                    ui.label(egui::RichText::new("[영상]").weak());
+                                    ui.label(egui::RichText::new(tr!("[영상]", "[Video]")).weak());
                                 }
                                 let mut name = egui::RichText::new(file_name(path));
                                 if is_current {
@@ -383,7 +480,7 @@ impl App {
             format,
             progress: None,
         });
-        self.status = String::from("다운로드 준비 중...");
+        self.status = tr!("다운로드 준비 중...", "Preparing download...");
         self.notice.clear();
     }
 
@@ -398,21 +495,30 @@ impl App {
             match job.receiver.try_recv() {
                 Ok(Update::Progress(progress)) => {
                     job.progress = Some(progress);
-                    self.status = String::from("다운로드 중...");
+                    self.status = tr!("다운로드 중...", "Downloading...");
                 }
                 Ok(Update::Processing) => {
                     job.progress = None;
-                    self.status = String::from(match job.format {
-                        Format::Mp3 => "mp3로 변환 중...",
-                        Format::Mp4 => "영상과 소리를 mp4로 정리하는 중...",
-                    });
+                    self.status = match job.format {
+                        Format::Mp3 => tr!("mp3로 변환 중...", "Converting to mp3..."),
+                        Format::Mp4 => tr!(
+                            "영상과 소리를 mp4로 정리하는 중...",
+                            "Packaging video and audio as mp4..."
+                        ),
+                    };
                 }
                 Ok(Update::Done(Ok(()))) => {
-                    break format!("저장 완료! 위치: {}", self.folder.display());
+                    let folder = self.folder.display();
+                    break tr!("저장 완료! 위치: {folder}", "Saved to: {folder}");
                 }
-                Ok(Update::Done(Err(message))) => break format!("오류: {message}"),
+                Ok(Update::Done(Err(message))) => break tr!("오류: {message}", "Error: {message}"),
                 Err(TryRecvError::Empty) => return, // 아직 진행 중
-                Err(TryRecvError::Disconnected) => break String::from("오류: 작업이 중단됐어요"),
+                Err(TryRecvError::Disconnected) => {
+                    break tr!(
+                        "오류: 작업이 중단됐어요",
+                        "Error: the task stopped unexpectedly"
+                    );
+                }
             }
         };
         self.job = None;
@@ -444,15 +550,21 @@ impl eframe::App for App {
             Format::Mp4 => "mp4",
         };
         storage.set_string("format", format.to_string());
+        if self.language_chosen {
+            let language = if lang::is_korean() { "ko" } else { "en" };
+            storage.set_string("language", language.to_string());
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let idle = self.job.is_none();
 
+        egui::Panel::top("language").show(ui, |ui| self.language_bar(ui));
+
         // 화면 하단의 저작권 정보. 남은 공간을 쓰는 CentralPanel보다 먼저 배치
         egui::Panel::bottom("copyright").show(ui, |ui| {
             ui.vertical_centered(|ui| {
-                ui.label(egui::RichText::new(COPYRIGHT).size(11.0).weak());
+                ui.label(egui::RichText::new(copyright()).size(11.0).weak());
             });
         });
 
@@ -470,17 +582,17 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ui, |ui| {
             // 다운로드 중에는 입력과 버튼을 비활성화
             ui.add_enabled_ui(idle, |ui| {
-                ui.label("영상 URL");
+                ui.label(tr!("영상 URL", "Video URL"));
                 let input =
                     ui.add(egui::TextEdit::singleline(&mut self.url).desired_width(f32::INFINITY));
                 // 입력창에서 Enter를 눌렀는지
                 let entered = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
-                ui.label(egui::RichText::new(SUPPORTED_SITES).size(11.0).weak());
+                ui.label(egui::RichText::new(supported_sites()).size(11.0).weak());
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("폴더 선택").clicked() {
+                    if ui.button(tr!("폴더 선택", "Choose folder")).clicked() {
                         // 취소하면 None이므로 기존 폴더를 그대로 유지
                         if let Some(folder) = rfd::FileDialog::new()
                             .set_directory(&self.folder)
@@ -495,15 +607,23 @@ impl eframe::App for App {
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    ui.label("저장 형식");
-                    ui.radio_value(&mut self.format, Format::Mp3, "MP3 (소리)");
-                    ui.radio_value(&mut self.format, Format::Mp4, "MP4 (동영상)");
+                    ui.label(tr!("저장 형식", "Format"));
+                    ui.radio_value(
+                        &mut self.format,
+                        Format::Mp3,
+                        tr!("MP3 (소리)", "MP3 (audio)"),
+                    );
+                    ui.radio_value(
+                        &mut self.format,
+                        Format::Mp4,
+                        tr!("MP4 (동영상)", "MP4 (video)"),
+                    );
                 });
 
                 ui.add_space(8.0);
                 let has_url = !self.url.trim().is_empty();
                 let clicked = ui
-                    .add_enabled(has_url, egui::Button::new("저장하기"))
+                    .add_enabled(has_url, egui::Button::new(tr!("저장하기", "Save")))
                     .clicked();
                 if clicked || (entered && has_url) {
                     self.start_download(ui.ctx().clone());
@@ -595,7 +715,7 @@ fn download(
 
     let mut child = command
         .spawn()
-        .map_err(|e| format!("yt-dlp를 실행할 수 없어요: {e}"))?;
+        .map_err(|e| tr!("yt-dlp를 실행할 수 없어요: {e}", "cannot run yt-dlp: {e}"))?;
 
     // 오류 출력은 별도 thread에서 읽기.
     // 읽지 않고 두면 통로가 가득 찼을 때 yt-dlp가 멈출 수 있음
@@ -625,15 +745,24 @@ fn download(
         }
     }
 
-    let status = child
-        .wait()
-        .map_err(|e| format!("yt-dlp의 종료를 확인할 수 없어요: {e}"))?;
+    let status = child.wait().map_err(|e| {
+        tr!(
+            "yt-dlp의 종료를 확인할 수 없어요: {e}",
+            "cannot wait for yt-dlp: {e}"
+        )
+    })?;
 
     if !status.success() {
         // yt-dlp가 남긴 오류의 마지막 줄을 보여주기
         let stderr = errors.join().unwrap_or_default();
-        let reason = stderr.lines().last().unwrap_or("원인을 알 수 없어요");
-        return Err(format!("다운로드에 실패했어요\n{reason}"));
+        let reason = match stderr.lines().last() {
+            Some(line) => line.to_string(),
+            None => tr!("원인을 알 수 없어요", "unknown reason"),
+        };
+        return Err(tr!(
+            "다운로드에 실패했어요\n{reason}",
+            "Download failed\n{reason}"
+        ));
     }
 
     Ok(())
@@ -736,13 +865,23 @@ fn move_to_trash(path: &Path) -> Result<(), trash::Error> {
 
 // 소리 출력 장치를 열고 파일 재생 시작하기
 fn start_playing(path: PathBuf) -> Result<Playing, String> {
-    let file = File::open(&path).map_err(|e| format!("파일을 열 수 없어요: {e}"))?;
-    let source = Decoder::try_from(file).map_err(|e| format!("재생할 수 없는 파일이에요: {e}"))?;
+    let file = File::open(&path)
+        .map_err(|e| tr!("파일을 열 수 없어요: {e}", "cannot open the file: {e}"))?;
+    let source = Decoder::try_from(file).map_err(|e| {
+        tr!(
+            "재생할 수 없는 파일이에요: {e}",
+            "cannot play this file: {e}"
+        )
+    })?;
 
     let total = source.total_duration();
 
-    let mut device = DeviceSinkBuilder::open_default_sink()
-        .map_err(|e| format!("소리 출력 장치를 열 수 없어요: {e}"))?;
+    let mut device = DeviceSinkBuilder::open_default_sink().map_err(|e| {
+        tr!(
+            "소리 출력 장치를 열 수 없어요: {e}",
+            "cannot open the audio output: {e}"
+        )
+    })?;
     // 정지할 때 터미널에 안내 문구가 나오지 않도록 끄기
     device.log_on_drop(false);
 

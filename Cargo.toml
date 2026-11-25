@@ -1,6 +1,6 @@
 [package]
 name = "yt-mp3"
-version = "1.0.7"
+version = "1.0.8"
 edition = "2024"
 
 [dependencies]
@@ -8,4 +8,5 @@ eframe = { version = "0.37.0", features = ["persistence"] }
 open = "5.4.5"
 rfd = "0.18.0"
 rodio = "0.23.0"
+sys-locale = "0.3.2"
 trash = "5.4.0"

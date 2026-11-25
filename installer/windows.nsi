@@ -4,15 +4,17 @@
 Unicode true
 !include "MUI2.nsh"
 
-!define NAME "DamaDama"
+!define NAME "JustGrab"
+!define NAME_KO "걍담아"
 ; 이전에 쓰던 이름들. 이전 설치본을 정리할 때 사용
 !define OLD_NAME "YouTube MP3"
 !define OLD_NAME_KO "유투브내려받기"
 !define OLD_NAME_EN "YouTube Download"
-!define PUBLISHER "아이티해결단(이혁)"
+!define OLD_NAME_DAMA "DamaDama"
+!define PUBLISHER "ITSolvers(Hyeok Lee)"
+!define PUBLISHER_KO "아이티해결단(이혁)"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\yt-mp3"
 
-Name "${NAME}"
 OutFile "${OUTFILE}"
 ; 관리자 권한 없이 사용자 폴더에 설치.
 ; yt-dlp를 나중에 업데이트할 수 있도록 쓰기 가능한 위치를 사용
@@ -29,16 +31,29 @@ SetCompressor /SOLID lzma
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
+; Windows의 표시 언어에 맞는 것을 자동 선택.
+; 맞는 언어가 없으면 첫 번째인 영어 사용
+!insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_LANGUAGE "Korean"
+
+LangString APPNAME ${LANG_ENGLISH} "${NAME}"
+LangString APPNAME ${LANG_KOREAN} "${NAME_KO}"
+LangString COMPANY ${LANG_ENGLISH} "${PUBLISHER}"
+LangString COMPANY ${LANG_KOREAN} "${PUBLISHER_KO}"
+Name "$(APPNAME)"
 
 ; 설치 파일의 "속성 > 자세히"에 보이는 정보 (언어 설정 뒤에 와야 함)
 VIProductVersion "${VERSION}.0"
-VIAddVersionKey /LANG=${LANG_KOREAN} "ProductName" "${NAME}"
-VIAddVersionKey /LANG=${LANG_KOREAN} "ProductVersion" "${VERSION}"
-VIAddVersionKey /LANG=${LANG_KOREAN} "FileVersion" "${VERSION}"
-VIAddVersionKey /LANG=${LANG_KOREAN} "FileDescription" "${NAME} 설치 파일"
-VIAddVersionKey /LANG=${LANG_KOREAN} "CompanyName" "${PUBLISHER}"
-VIAddVersionKey /LANG=${LANG_KOREAN} "LegalCopyright" "${PUBLISHER}"
+!macro VersionInfo LANG PRODUCT DESCRIPTION COMPANY
+    VIAddVersionKey /LANG=${LANG} "ProductName" "${PRODUCT}"
+    VIAddVersionKey /LANG=${LANG} "ProductVersion" "${VERSION}"
+    VIAddVersionKey /LANG=${LANG} "FileVersion" "${VERSION}"
+    VIAddVersionKey /LANG=${LANG} "FileDescription" "${DESCRIPTION}"
+    VIAddVersionKey /LANG=${LANG} "CompanyName" "${COMPANY}"
+    VIAddVersionKey /LANG=${LANG} "LegalCopyright" "${COMPANY}"
+!macroend
+!insertmacro VersionInfo ${LANG_ENGLISH} "${NAME}" "${NAME} Setup" "${PUBLISHER}"
+!insertmacro VersionInfo ${LANG_KOREAN} "${NAME_KO}" "${NAME_KO} 설치 파일" "${PUBLISHER_KO}"
 
 ; 이 설치 파일이 설치한 파일만 하나씩 삭제 (사용자가 넣은 파일은 남김)
 !macro RemoveFiles DIR
@@ -80,15 +95,24 @@ Section "Install"
     Delete "$DESKTOP\${OLD_NAME_KO}.lnk"
     Delete "$SMPROGRAMS\${OLD_NAME_EN}.lnk"
     Delete "$DESKTOP\${OLD_NAME_EN}.lnk"
+    Delete "$SMPROGRAMS\${OLD_NAME_DAMA}.lnk"
+    Delete "$DESKTOP\${OLD_NAME_DAMA}.lnk"
     ; 이전 version이 설치했던 폴더 정리
     !insertmacro RemoveFiles "$LOCALAPPDATA\Programs\${OLD_NAME}"
+    !insertmacro RemoveFiles "$LOCALAPPDATA\Programs\${OLD_NAME_DAMA}"
 
-    CreateShortcut "$SMPROGRAMS\${NAME}.lnk" "$INSTDIR\yt-mp3.exe" "" "$INSTDIR\icon.ico"
-    CreateShortcut "$DESKTOP\${NAME}.lnk" "$INSTDIR\yt-mp3.exe" "" "$INSTDIR\icon.ico"
+    ; 표시 언어를 바꾼 뒤 다시 설치해도 바로 가기가 두 개가 되지 않게 지우기
+    Delete "$SMPROGRAMS\${NAME}.lnk"
+    Delete "$DESKTOP\${NAME}.lnk"
+    Delete "$SMPROGRAMS\${NAME_KO}.lnk"
+    Delete "$DESKTOP\${NAME_KO}.lnk"
+
+    CreateShortcut "$SMPROGRAMS\$(APPNAME).lnk" "$INSTDIR\yt-mp3.exe" "" "$INSTDIR\icon.ico"
+    CreateShortcut "$DESKTOP\$(APPNAME).lnk" "$INSTDIR\yt-mp3.exe" "" "$INSTDIR\icon.ico"
 
     ; Windows의 "설치된 앱" 목록에 등록
-    WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${NAME}"
-    WriteRegStr HKCU "${UNINSTALL_KEY}" "Publisher" "${PUBLISHER}"
+    WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "$(APPNAME)"
+    WriteRegStr HKCU "${UNINSTALL_KEY}" "Publisher" "$(COMPANY)"
     WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
     WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\icon.ico"
     WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
@@ -101,5 +125,7 @@ Section "Uninstall"
 
     Delete "$SMPROGRAMS\${NAME}.lnk"
     Delete "$DESKTOP\${NAME}.lnk"
+    Delete "$SMPROGRAMS\${NAME_KO}.lnk"
+    Delete "$DESKTOP\${NAME_KO}.lnk"
     DeleteRegKey HKCU "${UNINSTALL_KEY}"
 SectionEnd

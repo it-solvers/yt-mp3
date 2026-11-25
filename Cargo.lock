@@ -4789,12 +4789,13 @@ dependencies = [
 
 [[package]]
 name = "yt-mp3"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "eframe",
  "open",
  "rfd",
  "rodio",
+ "sys-locale",
  "trash",
 ]
 
