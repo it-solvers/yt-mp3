@@ -45,7 +45,7 @@ struct App {
     notice: String,
     // 다운로드 중이면 Some, 아니면 None
     job: Option<Job>,
-    // 저장 폴더에 있는 mp3 목록
+    // 저장 폴더에 있는 mp3, mp4 목록
     files: Vec<PathBuf>,
     // 재생 중이면 Some, 아니면 None
     playing: Option<Playing>,
@@ -53,11 +53,23 @@ struct App {
     volume: f32,
     // 곡이 끝나면 목록의 다음 곡을 이어서 재생할지
     auto_next: bool,
+    // 다운로드할 때 저장할 형식
+    format: Format,
+}
+
+// 저장할 형식
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Format {
+    // 소리만
+    Mp3,
+    // 동영상
+    Mp4,
 }
 
 // 진행 중인 다운로드
 struct Job {
     receiver: Receiver<Update>,
+    format: Format,
     // 받은 비율 (0.0 ~ 1.0). 아직 모르면 None
     progress: Option<f32>,
 }
@@ -65,7 +77,8 @@ struct Job {
 // 다운로드 thread가 화면에 보내는 소식
 enum Update {
     Progress(f32),
-    Converting,
+    // 다 받은 뒤 ffmpeg로 처리하는 중
+    Processing,
     Done(Result<(), String>),
 }
 
@@ -99,6 +112,10 @@ impl App {
             .and_then(|v| v.parse::<f32>().ok())
             .map_or(1.0, |v| v.clamp(0.0, 1.0));
         let auto_next = saved("auto_next").is_none_or(|v| v != "false");
+        let format = match saved("format").as_deref() {
+            Some("mp4") => Format::Mp4,
+            _ => Format::Mp3,
+        };
 
         let mut app = Self {
             url: String::new(),
@@ -111,14 +128,15 @@ impl App {
             playing: None,
             volume,
             auto_next,
+            format,
         };
         app.refresh_files();
         app
     }
 
-    // 저장 폴더의 mp3 목록 다시 읽기
+    // 저장 폴더의 파일 목록 다시 읽기
     fn refresh_files(&mut self) {
-        match list_mp3(&self.folder) {
+        match list_media(&self.folder) {
             Ok(files) => self.files = files,
             Err(e) => {
                 self.files.clear();
@@ -136,6 +154,17 @@ impl App {
                 self.playing = Some(playing);
             }
             Err(message) => self.status = format!("오류: {message}"),
+        }
+    }
+
+    // 동영상은 PC의 기본 player로 열기
+    fn open_video(&mut self, path: &Path) {
+        // 소리가 겹치지 않도록 재생 중인 곡은 일시정지
+        if let Some(playing) = &self.playing {
+            playing.player.pause();
+        }
+        if let Err(e) = open::that_detached(path) {
+            self.status = format!("오류: 동영상을 열 수 없어요: {e}");
         }
     }
 
@@ -278,9 +307,15 @@ impl App {
             .min_scrolled_height(0.0)
             .show(ui, |ui| {
                 for path in &self.files {
+                    let video = is_video(path);
                     let is_current = self.playing.as_ref().is_some_and(|p| &p.path == path);
                     ui.horizontal(|ui| {
-                        if ui.button(symbol("►")).clicked() {
+                        let hint = if video {
+                            "기본 player로 열기"
+                        } else {
+                            "재생"
+                        };
+                        if ui.button(symbol("►")).on_hover_text(hint).clicked() {
                             clicked = Some(path.clone());
                         }
                         // 삭제 버튼은 재생 버튼과 헷갈리지 않도록 오른쪽 끝에 배치
@@ -292,6 +327,10 @@ impl App {
                             // 파일 이름은 남은 공간에 왼쪽부터 표시
                             let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
                             ui.with_layout(left_to_right, |ui| {
+                                // 파일 이름이 줄어도 동영상인지 알 수 있게 표시
+                                if video {
+                                    ui.label(egui::RichText::new("[영상]").weak());
+                                }
                                 let mut name = egui::RichText::new(file_name(path));
                                 if is_current {
                                     name = name.strong();
@@ -304,7 +343,11 @@ impl App {
             });
 
         if let Some(path) = clicked {
-            self.play(path);
+            if is_video(&path) {
+                self.open_video(&path);
+            } else {
+                self.play(path);
+            }
         }
         if let Some(path) = to_delete {
             self.delete(path);
@@ -316,6 +359,7 @@ impl App {
         let (sender, receiver) = mpsc::channel();
         let url = self.url.trim().to_string();
         let folder = self.folder.clone();
+        let format = self.format;
 
         thread::spawn(move || {
             // 소식을 보내고 화면을 다시 그려 달라고 요청
@@ -325,12 +369,13 @@ impl App {
                 ctx.request_repaint();
             };
 
-            let result = download(&url, &folder, send);
+            let result = download(&url, &folder, format, send);
             send(Update::Done(result));
         });
 
         self.job = Some(Job {
             receiver,
+            format,
             progress: None,
         });
         self.status = String::from("다운로드 준비 중...");
@@ -350,9 +395,12 @@ impl App {
                     job.progress = Some(progress);
                     self.status = String::from("다운로드 중...");
                 }
-                Ok(Update::Converting) => {
+                Ok(Update::Processing) => {
                     job.progress = None;
-                    self.status = String::from("mp3로 변환 중...");
+                    self.status = String::from(match job.format {
+                        Format::Mp3 => "mp3로 변환 중...",
+                        Format::Mp4 => "영상과 소리를 mp4로 정리하는 중...",
+                    });
                 }
                 Ok(Update::Done(Ok(()))) => {
                     break format!("저장 완료! 위치: {}", self.folder.display());
@@ -386,6 +434,11 @@ impl eframe::App for App {
         }
         storage.set_string("volume", self.volume.to_string());
         storage.set_string("auto_next", self.auto_next.to_string());
+        let format = match self.format {
+            Format::Mp3 => "mp3",
+            Format::Mp4 => "mp4",
+        };
+        storage.set_string("format", format.to_string());
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -434,6 +487,13 @@ impl eframe::App for App {
                 });
 
                 ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label("저장 형식");
+                    ui.radio_value(&mut self.format, Format::Mp3, "MP3 (소리)");
+                    ui.radio_value(&mut self.format, Format::Mp4, "MP4 (동영상)");
+                });
+
+                ui.add_space(8.0);
                 let has_url = !self.url.trim().is_empty();
                 let clicked = ui
                     .add_enabled(has_url, egui::Button::new("저장하기"))
@@ -464,10 +524,40 @@ impl eframe::App for App {
     }
 }
 
-// yt-dlp를 실행해서 mp3로 저장하기. 진행 상황은 on_update로 알려줌
-fn download(url: &str, folder: &Path, on_update: impl Fn(Update)) -> Result<(), String> {
-    //   -x                  : 오디오만 추출
-    //   --audio-format mp3  : mp3로 변환 (ffmpeg 필요)
+// 저장 형식에 따라 달라지는 yt-dlp 옵션
+fn format_args(format: Format) -> &'static [&'static str] {
+    match format {
+        //   -x                  : 오디오만 추출
+        //   --audio-format mp3  : mp3로 변환 (ffmpeg 필요)
+        Format::Mp3 => &["-x", "--audio-format", "mp3"],
+        //   -f                      : 가장 좋은 영상과 소리를 받기
+        //   -S                      : 1080p 이하, 재생이 잘 되는 H.264와 AAC를 우선
+        //   --merge-output-format   : 영상과 소리를 mp4 하나로 합치기
+        //   --remux-video           : 하나로 받은 파일도 mp4에 담기
+        //   -o                      : 파일 이름. mp3로 받을 때 생기는 임시 파일과
+        //                             겹치지 않도록 video를 붙임
+        Format::Mp4 => &[
+            "-f",
+            "bv*+ba/b",
+            "-S",
+            "res:1080,vcodec:h264,acodec:m4a",
+            "--merge-output-format",
+            "mp4",
+            "--remux-video",
+            "mp4",
+            "-o",
+            "%(title)s [%(id)s] video.%(ext)s",
+        ],
+    }
+}
+
+// yt-dlp를 실행해서 저장하기. 진행 상황은 on_update로 알려줌
+fn download(
+    url: &str,
+    folder: &Path,
+    format: Format,
+    on_update: impl Fn(Update),
+) -> Result<(), String> {
     //   --no-playlist       : 재생목록 링크여도 영상 하나만 받기
     //   --no-mtime          : 파일 날짜를 받은 시각으로 (최신순 정렬용)
     //   --newline           : 진행률을 한 줄씩 출력
@@ -478,7 +568,8 @@ fn download(url: &str, folder: &Path, on_update: impl Fn(Update)) -> Result<(), 
     //   --                  : 이 뒤의 값은 옵션이 아니라고 알려주기
     let mut command = Command::new("yt-dlp");
     command
-        .args(["-x", "--audio-format", "mp3", "--no-playlist", "--no-mtime"])
+        .args(format_args(format))
+        .args(["--no-playlist", "--no-mtime"])
         .args(["--newline", "--color", "never", "--encoding", "utf-8"])
         .arg("--progress-template")
         .arg(format!(
@@ -519,8 +610,11 @@ fn download(url: &str, folder: &Path, on_update: impl Fn(Update)) -> Result<(), 
 
         if let Some(progress) = parse_progress(&line) {
             on_update(Update::Progress(progress));
-        } else if line.starts_with("[ExtractAudio]") {
-            on_update(Update::Converting);
+        } else if ["[ExtractAudio]", "[Merger]", "[VideoRemuxer]"]
+            .iter()
+            .any(|step| line.starts_with(step))
+        {
+            on_update(Update::Processing);
         }
     }
 
@@ -592,17 +686,22 @@ fn tool_path() -> OsString {
     std::env::join_paths(folders).unwrap_or(current)
 }
 
-// 폴더 안의 mp3 파일을 최신순으로 가져오기
-fn list_mp3(folder: &Path) -> std::io::Result<Vec<PathBuf>> {
+// 파일의 확장자가 주어진 것과 같은지 (대소문자 구분 없음)
+fn has_extension(path: &Path, extension: &str) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case(extension))
+}
+
+fn is_video(path: &Path) -> bool {
+    has_extension(path, "mp4")
+}
+
+// 폴더 안의 mp3, mp4 파일을 최신순으로 가져오기
+fn list_media(folder: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut files: Vec<PathBuf> = fs::read_dir(folder)?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("mp3"))
-        })
+        .filter(|path| path.is_file() && (has_extension(path, "mp3") || is_video(path)))
         .collect();
 
     files.sort_by_key(|path| {
@@ -659,10 +758,13 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-// 목록에서 current 다음에 있는 파일. 마지막 곡이거나 목록에 없으면 None
+// 목록에서 current 다음에 있는 곡(동영상은 건너뜀). 마지막 곡이거나 목록에 없으면 None
 fn next_file(files: &[PathBuf], current: &Path) -> Option<PathBuf> {
     let index = files.iter().position(|path| path == current)?;
-    files.get(index + 1).cloned()
+    files[index + 1..]
+        .iter()
+        .find(|path| !is_video(path))
+        .cloned()
 }
 
 // 버튼에 쓸 특수문자.
@@ -695,6 +797,13 @@ mod tests {
         assert_eq!(next_file(&files, &files[0]), Some(files[1].clone()));
         assert_eq!(next_file(&files, &files[1]), None);
         assert_eq!(next_file(&files, Path::new("c.mp3")), None);
+    }
+
+    #[test]
+    fn skips_videos_when_finding_next_file() {
+        let files = ["a.mp3", "b.MP4", "c.mp3", "d.mp4"].map(PathBuf::from);
+        assert_eq!(next_file(&files, &files[0]), Some(files[2].clone()));
+        assert_eq!(next_file(&files, &files[2]), None);
     }
 
     #[test]
