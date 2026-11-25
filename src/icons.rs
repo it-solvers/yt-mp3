@@ -1,11 +1,11 @@
 // 직접 그리는 아이콘.
-// 색은 theme.rs의 3색만 사용. 저장과 재생 중인 버튼만 강조색, 파일 종류는 모양으로 구별.
+// 색은 theme.rs의 3색만 사용. 저장과 재생 중인 버튼만 강조색.
 // 이미지 파일 없이 도형으로 그려서 어떤 크기에서도 선명함
 
 use crate::theme::palette;
 use eframe::egui::{
     Color32, CornerRadius, CursorIcon, Painter, Pos2, Rect, Response, Role, Sense, Shape, Stroke,
-    StrokeKind, Ui, Vec2, WidgetInfo, pos2, vec2,
+    Ui, Vec2, WidgetInfo, pos2, vec2,
 };
 
 #[derive(Clone, Copy)]
@@ -28,10 +28,8 @@ pub enum Icon {
     Info,
     // 언어 바꾸기
     Globe,
-    // 소리 파일 표시
+    // 음표
     Music,
-    // 동영상 파일 표시
-    Video,
 }
 
 // 아이콘 하나가 들어가는 버튼. label은 마우스를 올렸을 때 보여줄 설명
@@ -68,7 +66,7 @@ pub fn button(ui: &mut Ui, icon: Icon, label: String) -> Response {
             }
         };
         ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
-        paint(ui.painter(), rect.shrink(7.0), icon, glyph, fill);
+        paint(ui.painter(), rect.shrink(7.0), icon, glyph);
     }
 
     response.on_hover_text(label)
@@ -117,13 +115,7 @@ pub fn round_button(ui: &mut Ui, rect: Rect, icon: Icon, label: String) -> Respo
     };
     ui.painter()
         .circle_filled(rect.center(), rect.width() / 2.0, fill);
-    paint(
-        ui.painter(),
-        rect.shrink(rect.width() * 0.31),
-        icon,
-        glyph,
-        fill,
-    );
+    paint(ui.painter(), rect.shrink(rect.width() * 0.31), icon, glyph);
     response.on_hover_text(label)
 }
 
@@ -131,27 +123,17 @@ pub fn round_button(ui: &mut Ui, rect: Rect, icon: Icon, label: String) -> Respo
 pub fn flat_button(ui: &mut Ui, rect: Rect, icon: Icon, on: bool, label: String) -> Response {
     let response = place(ui, rect, &label);
     let colors = palette(ui);
-    let background = if response.hovered() {
-        let fill = colors.veil(0.12);
+    if response.hovered() {
         ui.painter()
-            .circle_filled(rect.center(), rect.width() / 2.0, fill);
-        fill
-    } else {
-        colors.edge
-    };
+            .circle_filled(rect.center(), rect.width() / 2.0, colors.veil(0.12));
+    }
     let color = match icon {
         // 이전, 다음 곡은 밝게. 반복과 섞기는 꺼져 있으면 흐리게
         Icon::Previous | Icon::Next => colors.ink,
         _ if on => colors.point,
         _ => colors.veil(0.45),
     };
-    paint(
-        ui.painter(),
-        rect.shrink(rect.width() * 0.22),
-        icon,
-        color,
-        background,
-    );
+    paint(ui.painter(), rect.shrink(rect.width() * 0.22), icon, color);
     response.on_hover_text(label)
 }
 
@@ -163,63 +145,12 @@ fn place(ui: &mut Ui, rect: Rect, label: &str) -> Response {
     response
 }
 
-// 목록 앞의 파일 아이콘 겸 재생 버튼.
-// 평소에는 파일 종류(kind: Music 또는 Video)를 보여주고, 마우스를 올리면 재생 모양.
-// paused는 이 파일이 재생 중일 때의 일시정지 여부, 재생 중이 아니면 None
-pub fn file_button(ui: &mut Ui, kind: Icon, paused: Option<bool>, label: String) -> Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
-    describe(&response, ui, &label);
-
-    if ui.is_rect_visible(rect) {
-        let colors = palette(ui);
-        let radius = CornerRadius::same(8);
-        let hovered = response.hovered();
-
-        if paused.is_some() || hovered {
-            // 재생 중이거나 마우스를 올린 상태: 강조색 버튼
-            let fill = if hovered {
-                colors.point.lerp_to_gamma(colors.ink, 0.15)
-            } else {
-                colors.point
-            };
-            let glyph = match paused {
-                Some(false) => Icon::Pause,
-                _ => Icon::Play,
-            };
-            ui.painter().rect_filled(rect, radius, fill);
-            paint(ui.painter(), rect.shrink(7.0), glyph, colors.on_point, fill);
-        } else {
-            // 평소: 테두리만 있는 칸에 파일 종류 (음표 또는 필름)
-            let line = Stroke::new(1.5, colors.shade(0.35));
-            ui.painter()
-                .rect_stroke(rect, radius, line, StrokeKind::Inside);
-            paint(
-                ui.painter(),
-                rect.shrink(6.0),
-                kind,
-                colors.ink,
-                colors.base,
-            );
-        }
-    }
-
-    response
-        .on_hover_cursor(CursorIcon::PointingHand)
-        .on_hover_text(label)
-}
-
 // 설명용 그림 (누를 수 없음). 배경 없이 그려서 버튼과 구별
 pub fn picture(ui: &mut Ui, icon: Icon, label: String) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
     if ui.is_rect_visible(rect) {
         let colors = palette(ui);
-        paint(
-            ui.painter(),
-            rect.shrink(6.0),
-            icon,
-            colors.shade(0.55),
-            colors.base,
-        );
+        paint(ui.painter(), rect.shrink(6.0), icon, colors.shade(0.55));
     }
     response.on_hover_text(label)
 }
@@ -258,7 +189,7 @@ pub fn primary_button(ui: &mut Ui, icon: Icon, label: String, enabled: bool) -> 
     let content = 16.0 + 6.0 + text.size().x;
     let left = rect.center().x - content / 2.0;
     let icon_rect = Rect::from_center_size(pos2(left + 8.0, rect.center().y), Vec2::splat(16.0));
-    paint(&painter, icon_rect, icon, colors.on_point, fill);
+    paint(&painter, icon_rect, icon, colors.on_point);
     let text_pos = pos2(left + 22.0, rect.center().y - text.size().y / 2.0);
     painter.galley(text_pos, text, colors.on_point);
 
@@ -271,8 +202,7 @@ fn describe(response: &Response, ui: &Ui, label: &str) {
 }
 
 // rect 안에 채운 모양의 아이콘 그리기. 좌표는 0.0 ~ 1.0 비율로 지정.
-// background는 그림 안을 파낼 때 쓰는 배경색
-fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32, background: Color32) {
+fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
     let at = |x: f32, y: f32| rect.min + vec2(x * rect.width(), y * rect.height());
     // 볼록 다각형만 채울 수 있으므로 복잡한 모양은 나눠서 그림
     let fill = |points: Vec<Pos2>, color: Color32| {
@@ -434,22 +364,6 @@ fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32, background: 
             block(0.84, 0.10, 0.96, 0.72, 0);
             painter.circle_filled(at(0.22, 0.82), rect.width() * 0.18, color);
             painter.circle_filled(at(0.78, 0.72), rect.width() * 0.18, color);
-        }
-        Icon::Video => {
-            // 필름: 몸체에 양옆의 구멍과 가운데 칸 구분선을 배경색으로 파내기
-            block(0.02, 0.04, 0.98, 0.96, 2);
-            let cut_out = |x1: f32, y1: f32, x2: f32, y2: f32| {
-                painter.rect_filled(
-                    Rect::from_min_max(at(x1, y1), at(x2, y2)),
-                    CornerRadius::ZERO,
-                    background,
-                );
-            };
-            for y in [0.13, 0.42, 0.71] {
-                cut_out(0.09, y, 0.21, y + 0.16);
-                cut_out(0.79, y, 0.91, y + 0.16);
-            }
-            cut_out(0.30, 0.45, 0.70, 0.55);
         }
     }
 }

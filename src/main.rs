@@ -832,50 +832,70 @@ impl App {
                         .filter(|p| &p.path == path)
                         .map(|p| p.player.is_paused());
 
-                    file_card(ui, current.is_some()).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            // 앞의 아이콘이 재생 버튼
-                            let kind = if video { Icon::Video } else { Icon::Music };
-                            let hint = match current {
-                                Some(false) => tr!("일시정지", "Pause"),
-                                Some(true) => tr!("계속 재생", "Resume"),
-                                None if video => {
-                                    tr!("기본 player로 열기", "Open in default player")
-                                }
-                                None => tr!("재생", "Play"),
-                            };
-                            if icons::file_button(ui, kind, current, hint).clicked() {
-                                if current.is_some() {
-                                    toggle_pause = true;
-                                } else {
-                                    clicked = Some(path.clone());
-                                }
-                            }
+                    // 줄 전체가 재생 버튼. 안의 삭제 버튼을 누를 때는 삭제만 동작함
+                    let builder = egui::UiBuilder::new()
+                        .id_salt(path)
+                        .sense(egui::Sense::click());
+                    let row = ui.scope_builder(builder, |ui| {
+                        // 글자를 선택하는 기능이 줄의 클릭을 가로채지 않게 끄기
+                        ui.style_mut().interaction.selectable_labels = false;
+                        let hovered = ui.response().contains_pointer();
 
-                            // 삭제 버튼은 오른쪽 끝에 배치
-                            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
-                            ui.with_layout(right_to_left, |ui| {
-                                let delete = tr!("삭제", "Delete");
-                                if icons::button(ui, Icon::Trash, delete).clicked() {
-                                    to_delete = Some(path.clone());
-                                }
+                        file_card(ui, current.is_some(), hovered).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                extension_badge(ui, path, current.is_some());
 
-                                // 파일 이름은 남은 공간에 왼쪽부터 표시
-                                let left_to_right =
-                                    egui::Layout::left_to_right(egui::Align::Center);
-                                ui.with_layout(left_to_right, |ui| {
-                                    let mut name = egui::RichText::new(file_name(path))
-                                        .color(ui.visuals().strong_text_color());
-                                    // 재생 중인 곡은 강조색으로 표시
-                                    if current.is_some() {
-                                        name = name.strong().color(ui.visuals().hyperlink_color);
+                                // 삭제 버튼은 오른쪽 끝에 배치
+                                let right_to_left =
+                                    egui::Layout::right_to_left(egui::Align::Center);
+                                ui.with_layout(right_to_left, |ui| {
+                                    let delete = tr!("삭제", "Delete");
+                                    if icons::button(ui, Icon::Trash, delete).clicked() {
+                                        to_delete = Some(path.clone());
                                     }
-                                    ui.add(egui::Label::new(name).truncate());
+
+                                    // 파일 이름은 남은 공간에 왼쪽부터 표시
+                                    let left_to_right =
+                                        egui::Layout::left_to_right(egui::Align::Center);
+                                    ui.with_layout(left_to_right, |ui| {
+                                        let mut name = egui::RichText::new(file_name(path))
+                                            .color(ui.visuals().strong_text_color());
+                                        // 재생 중인 곡은 강조색으로 표시
+                                        if current.is_some() {
+                                            name =
+                                                name.strong().color(ui.visuals().hyperlink_color);
+                                        }
+                                        ui.add(egui::Label::new(name).truncate());
+                                    });
                                 });
                             });
                         });
                     });
+
+                    // 마우스를 올리면 누를 수 있다는 것과 할 일을 알려주기
+                    let hint = match current {
+                        Some(false) => tr!("눌러서 일시정지", "Click to pause"),
+                        Some(true) => tr!("눌러서 계속 재생", "Click to resume"),
+                        None if video => {
+                            tr!(
+                                "눌러서 기본 player로 열기",
+                                "Click to open in default player"
+                            )
+                        }
+                        None => tr!("눌러서 재생", "Click to play"),
+                    };
+                    let response = row
+                        .response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(hint);
+                    if response.clicked() {
+                        if current.is_some() {
+                            toggle_pause = true;
+                        } else {
+                            clicked = Some(path.clone());
+                        }
+                    }
                 }
             });
 
@@ -1270,10 +1290,12 @@ fn accent_marks(ui: &mut egui::Ui) {
 }
 
 // 목록의 파일 한 줄을 감싸는 카드. 재생 중이면 강조색으로 구별
-fn file_card(ui: &egui::Ui, current: bool) -> egui::Frame {
+fn file_card(ui: &egui::Ui, current: bool, hovered: bool) -> egui::Frame {
     let colors = theme::palette(ui);
     let (fill, line) = if current {
         (colors.tint(0.12), colors.point)
+    } else if hovered {
+        (colors.shade(0.11), colors.shade(0.28))
     } else {
         (colors.shade(0.05), colors.shade(0.11))
     };
@@ -1283,6 +1305,33 @@ fn file_card(ui: &egui::Ui, current: bool) -> egui::Frame {
         .stroke(egui::Stroke::new(1.0, line))
         .corner_radius(12)
         .inner_margin(egui::Margin::symmetric(10, 6))
+}
+
+// 파일 확장자를 글자로 보여주는 칸. 재생 중인 파일은 강조색
+fn extension_badge(ui: &mut egui::Ui, path: &Path, current: bool) {
+    let colors = theme::palette(ui);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(38.0, 28.0), egui::Sense::hover());
+    let radius = egui::CornerRadius::same(8);
+    let text_color = if current {
+        ui.painter().rect_filled(rect, radius, colors.point);
+        colors.on_point
+    } else {
+        let line = egui::Stroke::new(1.5, colors.shade(0.35));
+        ui.painter()
+            .rect_stroke(rect, radius, line, egui::StrokeKind::Inside);
+        colors.ink
+    };
+    let extension = path
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_uppercase())
+        .unwrap_or_default();
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        extension,
+        egui::FontId::proportional(11.0),
+        text_color,
+    );
 }
 
 // 설치한 프로그램에 들어 있는 license 문서의 위치. 없으면 None
@@ -1445,7 +1494,9 @@ fn marquee(ui: &mut egui::Ui, text: &str, elapsed: Duration) {
 
     // 영역 밖으로 나간 부분은 잘라내기
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-    for start in [rect.left() - offset, rect.left() - offset + period] {
+    // 처음에 첫 글자가 흐린 부분에 가리지 않도록 그만큼 안쪽에서 시작
+    let first = rect.left() + FADE - offset;
+    for start in [first, first + period] {
         painter.galley(egui::pos2(start, rect.top()), galley.clone(), color);
     }
 
