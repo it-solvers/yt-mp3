@@ -37,6 +37,7 @@ fn main() -> eframe::Result {
         &app_name(),
         options,
         Box::new(|cc| {
+            apply_theme(&cc.egui_ctx);
             let app = App::new(cc.storage);
             // 저장해 둔 언어에 맞게 창 제목 다시 설정
             cc.egui_ctx
@@ -44,6 +45,33 @@ fn main() -> eframe::Result {
             Ok(Box::new(app))
         }),
     )
+}
+
+// 강조색(청록색). 저장 버튼에 사용
+const ACCENT: egui::Color32 = egui::Color32::from_rgb(22, 128, 118);
+
+// 어두운 화면과 밝은 화면 모두에 청록색 강조색 적용
+fn apply_theme(ctx: &egui::Context) {
+    ctx.all_styles_mut(|style| {
+        // bg는 선택 영역, 진행률, slider의 채움색. fg는 그 위의 글자와 입력창 테두리
+        let (bg, fg) = if style.visuals.dark_mode {
+            (ACCENT, egui::Color32::from_rgb(190, 250, 240))
+        } else {
+            (
+                egui::Color32::from_rgb(175, 230, 222),
+                egui::Color32::from_rgb(0, 92, 84),
+            )
+        };
+        let link = if style.visuals.dark_mode {
+            egui::Color32::from_rgb(64, 200, 184)
+        } else {
+            ACCENT
+        };
+        style.visuals.selection.bg_fill = bg;
+        style.visuals.selection.stroke = egui::Stroke::new(1.0, fg);
+        style.visuals.hyperlink_color = link;
+        style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, link);
+    });
 }
 
 fn app_name() -> String {
@@ -177,18 +205,22 @@ impl App {
         app
     }
 
-    // 화면 상단의 언어 선택 버튼
-    fn language_bar(&mut self, ui: &mut egui::Ui) {
-        let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
-        ui.with_layout(right_to_left, |ui| {
-            let korean = lang::is_korean();
-            // 오른쪽부터 배치하므로 English를 먼저 추가
-            if ui.selectable_label(!korean, "English").clicked() {
-                self.set_language(ui.ctx(), false);
-            }
-            if ui.selectable_label(korean, "한국어").clicked() {
-                self.set_language(ui.ctx(), true);
-            }
+    // 화면 상단: 왼쪽에 앱 이름, 오른쪽에 언어 선택 버튼
+    fn title_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(app_name()).heading().strong());
+
+            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+            ui.with_layout(right_to_left, |ui| {
+                let korean = lang::is_korean();
+                // 오른쪽부터 배치하므로 English를 먼저 추가
+                if ui.selectable_label(!korean, "English").clicked() {
+                    self.set_language(ui.ctx(), false);
+                }
+                if ui.selectable_label(korean, "한국어").clicked() {
+                    self.set_language(ui.ctx(), true);
+                }
+            });
         });
     }
 
@@ -261,27 +293,8 @@ impl App {
         }
     }
 
-    // 재생 조작 부분: 음량, 자동 재생, 탐색 bar, 일시정지/정지 버튼
+    // 화면 아래의 재생 bar: 일시정지/정지, 곡 이름, 음량, 탐색 bar
     fn player_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label(tr!("음량", "Volume"));
-            let slider = egui::Slider::new(&mut self.volume, 0.0..=1.0)
-                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
-                .custom_parser(|text| {
-                    let number = text.trim().trim_end_matches('%').parse::<f64>().ok()?;
-                    Some(number / 100.0)
-                });
-            if ui.add(slider).changed()
-                && let Some(playing) = &self.playing
-            {
-                playing.player.set_volume(self.volume);
-            }
-            ui.checkbox(
-                &mut self.auto_next,
-                tr!("다음 곡 자동 재생", "Play next automatically"),
-            );
-        });
-
         let Some(playing) = &mut self.playing else {
             return;
         };
@@ -308,7 +321,29 @@ impl App {
                 .on_hover_text(tr!("정지", "Stop"))
                 .clicked();
 
-            ui.add(egui::Label::new(file_name(&playing.path)).truncate());
+            // 음량은 오른쪽 끝에 두고, 곡 이름은 남은 공간에 표시
+            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+            ui.with_layout(right_to_left, |ui| {
+                ui.spacing_mut().slider_width = 80.0;
+                let percent = self.volume * 100.0;
+                let slider = egui::Slider::new(&mut self.volume, 0.0..=1.0)
+                    .show_value(false)
+                    .trailing_fill(true);
+                if ui
+                    .add(slider)
+                    .on_hover_text(format!("{percent:.0}%"))
+                    .changed()
+                {
+                    playing.player.set_volume(self.volume);
+                }
+                ui.label(tr!("음량", "Volume"));
+
+                let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
+                ui.with_layout(left_to_right, |ui| {
+                    let name = egui::RichText::new(file_name(&playing.path)).strong();
+                    ui.add(egui::Label::new(name).truncate());
+                });
+            });
         });
 
         ui.horizontal(|ui| {
@@ -326,25 +361,30 @@ impl App {
                 .seeking
                 .unwrap_or_else(|| position.as_secs_f32().min(total_secs));
 
-            ui.label(format!(
-                "{} / {}",
-                format_time(Duration::from_secs_f32(seconds)),
-                format_time(total)
-            ));
+            ui.label(format_time(Duration::from_secs_f32(seconds)));
 
-            ui.spacing_mut().slider_width = ui.available_width();
-            let slider =
-                ui.add(egui::Slider::new(&mut seconds, 0.0..=total_secs).show_value(false));
+            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+            ui.with_layout(right_to_left, |ui| {
+                ui.label(format_time(total));
 
-            if slider.dragged() {
-                playing.seeking = Some(seconds);
-            } else if slider.drag_stopped() || slider.changed() {
-                // 마우스를 놓았을 때 한 번만 이동하기
-                playing.seeking = None;
-                if let Err(e) = playing.player.try_seek(Duration::from_secs_f32(seconds)) {
-                    self.status = tr!("오류: 이동할 수 없어요: {e}", "Error: cannot seek: {e}");
+                // 두 시간 표시 사이를 탐색 bar로 채우기
+                ui.spacing_mut().slider_width = ui.available_width();
+                let slider = ui.add(
+                    egui::Slider::new(&mut seconds, 0.0..=total_secs)
+                        .show_value(false)
+                        .trailing_fill(true),
+                );
+
+                if slider.dragged() {
+                    playing.seeking = Some(seconds);
+                } else if slider.drag_stopped() || slider.changed() {
+                    // 마우스를 놓았을 때 한 번만 이동하기
+                    playing.seeking = None;
+                    if let Err(e) = playing.player.try_seek(Duration::from_secs_f32(seconds)) {
+                        self.status = tr!("오류: 이동할 수 없어요: {e}", "Error: cannot seek: {e}");
+                    }
                 }
-            }
+            });
         });
 
         if stop {
@@ -383,6 +423,75 @@ impl App {
         }
     }
 
+    // 화면 위쪽: URL 입력, 저장 버튼, 저장 형식과 위치
+    fn download_form(&mut self, ui: &mut egui::Ui) {
+        let has_url = !self.url.trim().is_empty();
+        let mut clicked = false;
+        let mut entered = false;
+
+        // 저장 버튼과 도움말을 오른쪽에 두고, 입력창이 남은 폭을 채우기
+        let row = egui::vec2(ui.available_width(), 32.0);
+        let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+        ui.allocate_ui_with_layout(row, right_to_left, |ui| {
+            let label = egui::RichText::new(tr!("저장하기", "Save"))
+                .strong()
+                .color(egui::Color32::WHITE);
+            let button = egui::Button::new(label)
+                .fill(ACCENT)
+                .min_size(egui::vec2(88.0, 32.0));
+            clicked = ui.add_enabled(has_url, button).clicked();
+
+            // 지원 사이트 안내는 마우스를 올렸을 때만 보여주기
+            ui.button("?").on_hover_text(supported_sites());
+
+            let input = ui.add(
+                egui::TextEdit::singleline(&mut self.url)
+                    .hint_text(tr!("영상 URL 붙여넣기", "Paste a video URL"))
+                    .desired_width(f32::INFINITY)
+                    .min_size(egui::vec2(0.0, 32.0))
+                    .align(egui::Align2::LEFT_CENTER),
+            );
+            // 입력창에서 Enter를 눌렀는지
+            entered = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        });
+
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.radio_value(
+                &mut self.format,
+                Format::Mp3,
+                tr!("MP3 (소리)", "MP3 (audio)"),
+            );
+            ui.radio_value(
+                &mut self.format,
+                Format::Mp4,
+                tr!("MP4 (동영상)", "MP4 (video)"),
+            );
+
+            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+            ui.with_layout(right_to_left, |ui| {
+                if ui.button(tr!("폴더 변경", "Change folder")).clicked() {
+                    // 취소하면 None이므로 기존 폴더를 그대로 유지
+                    if let Some(folder) = rfd::FileDialog::new()
+                        .set_directory(&self.folder)
+                        .pick_folder()
+                    {
+                        self.folder = folder;
+                        self.refresh_files();
+                    }
+                }
+                // 경로가 길면 줄이고, 마우스를 올리면 전체 경로 보여주기
+                let path = self.folder.display().to_string();
+                ui.add(egui::Label::new(egui::RichText::new(&path).weak()).truncate())
+                    .on_hover_text(path);
+            });
+        });
+
+        if clicked || (entered && has_url) {
+            self.start_download(ui.ctx().clone());
+        }
+    }
+
     // 확인을 받은 뒤 파일을 휴지통으로 옮기기
     fn delete(&mut self, path: PathBuf) {
         let name = file_name(&path);
@@ -415,14 +524,23 @@ impl App {
     fn file_list(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let count = self.files.len();
-            ui.label(tr!("저장된 목록 ({count}개)", "Saved files ({count})"));
-            if ui
-                .button(symbol("↻"))
-                .on_hover_text(tr!("새로고침", "Refresh"))
-                .clicked()
-            {
-                self.refresh_files();
-            }
+            let title = tr!("저장된 목록 ({count})", "Saved files ({count})");
+            ui.label(egui::RichText::new(title).strong());
+
+            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+            ui.with_layout(right_to_left, |ui| {
+                if ui
+                    .button(symbol("↻"))
+                    .on_hover_text(tr!("새로고침", "Refresh"))
+                    .clicked()
+                {
+                    self.refresh_files();
+                }
+                ui.checkbox(
+                    &mut self.auto_next,
+                    tr!("다음 곡 자동 재생", "Play next automatically"),
+                );
+            });
         });
 
         // 목록을 그리는 동안에는 클릭한 파일만 기억하고, 재생과 삭제는 그린 뒤에 하기
@@ -465,8 +583,9 @@ impl App {
                                     ui.label(egui::RichText::new(tr!("[영상]", "[Video]")).weak());
                                 }
                                 let mut name = egui::RichText::new(file_name(path));
+                                // 재생 중인 곡은 강조색으로 표시
                                 if is_current {
-                                    name = name.strong();
+                                    name = name.strong().color(ui.visuals().hyperlink_color);
                                 }
                                 ui.add(egui::Label::new(name).truncate());
                             });
@@ -590,21 +709,32 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let idle = self.job.is_none();
 
-        egui::Panel::top("language").show(ui, |ui| self.language_bar(ui));
+        egui::Panel::top("title").show(ui, |ui| self.title_bar(ui));
 
-        // 화면 하단의 저작권 정보. 남은 공간을 쓰는 CentralPanel보다 먼저 배치
+        // 아래쪽 영역은 나중에 배치한 것이 위에 놓임.
+        // 남은 공간을 쓰는 CentralPanel보다 먼저 배치해야 함
+
+        // 맨 아래: 저작권 정보와 license 링크
         egui::Panel::bottom("copyright").show(ui, |ui| {
-            ui.vertical_centered(|ui| {
+            ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(copyright()).size(11.0).weak());
-                let licenses = tr!("오픈소스 라이선스", "Open source licenses");
-                if ui.link(egui::RichText::new(licenses).size(11.0)).clicked() {
-                    self.open_licenses();
-                }
+
+                let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+                ui.with_layout(right_to_left, |ui| {
+                    let licenses = tr!("오픈소스 라이선스", "Open source licenses");
+                    if ui.link(egui::RichText::new(licenses).size(11.0)).clicked() {
+                        self.open_licenses();
+                    }
+                });
             });
         });
 
-        // 삭제 결과는 저작권 정보의 분리선 위에 표시.
-        // 아래쪽 영역은 나중에 배치한 것이 위에 놓임
+        // 재생 중일 때만 보이는 재생 bar
+        if self.playing.is_some() {
+            egui::Panel::bottom("player").show(ui, |ui| self.player_bar(ui));
+        }
+
+        // 삭제 결과 등의 안내는 분리선 위에 표시
         if !self.notice.is_empty() {
             egui::Panel::bottom("notice")
                 .show_separator_line(false)
@@ -616,54 +746,7 @@ impl eframe::App for App {
 
         egui::CentralPanel::default().show(ui, |ui| {
             // 다운로드 중에는 입력과 버튼을 비활성화
-            ui.add_enabled_ui(idle, |ui| {
-                ui.label(tr!("영상 URL", "Video URL"));
-                let input =
-                    ui.add(egui::TextEdit::singleline(&mut self.url).desired_width(f32::INFINITY));
-                // 입력창에서 Enter를 눌렀는지
-                let entered = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-
-                ui.label(egui::RichText::new(supported_sites()).size(11.0).weak());
-
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button(tr!("폴더 선택", "Choose folder")).clicked() {
-                        // 취소하면 None이므로 기존 폴더를 그대로 유지
-                        if let Some(folder) = rfd::FileDialog::new()
-                            .set_directory(&self.folder)
-                            .pick_folder()
-                        {
-                            self.folder = folder;
-                            self.refresh_files();
-                        }
-                    }
-                    ui.label(self.folder.display().to_string());
-                });
-
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.label(tr!("저장 형식", "Format"));
-                    ui.radio_value(
-                        &mut self.format,
-                        Format::Mp3,
-                        tr!("MP3 (소리)", "MP3 (audio)"),
-                    );
-                    ui.radio_value(
-                        &mut self.format,
-                        Format::Mp4,
-                        tr!("MP4 (동영상)", "MP4 (video)"),
-                    );
-                });
-
-                ui.add_space(8.0);
-                let has_url = !self.url.trim().is_empty();
-                let clicked = ui
-                    .add_enabled(has_url, egui::Button::new(tr!("저장하기", "Save")))
-                    .clicked();
-                if clicked || (entered && has_url) {
-                    self.start_download(ui.ctx().clone());
-                }
-            });
+            ui.add_enabled_ui(idle, |ui| self.download_form(ui));
 
             // 알려줄 내용이 있을 때만 상태 줄 보여주기
             if !self.status.is_empty() {
@@ -680,7 +763,6 @@ impl eframe::App for App {
             }
 
             ui.separator();
-            self.player_bar(ui);
             self.file_list(ui);
         });
     }
