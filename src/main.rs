@@ -145,6 +145,15 @@ impl Toast {
     }
 }
 
+// 목록에서 끌고 있는 줄
+struct Drag {
+    path: PathBuf,
+    // 줄의 위쪽에서 마우스로 잡은 곳까지의 거리
+    grab: f32,
+    // 줄의 높이
+    height: f32,
+}
+
 // 다운로드에 실패했을 때 팝업에 보여줄 내용
 struct Failure {
     reason: String,
@@ -182,8 +191,8 @@ struct App {
     selected: Option<HashSet<PathBuf>>,
     // 직전에 창이 선택되어 있었는지. 다시 선택된 순간을 알아내는 데 사용
     focused: bool,
-    // 편집 중에 끌고 있는 파일
-    dragging: Option<PathBuf>,
+    // 편집 중에 끌고 있는 줄
+    dragging: Option<Drag>,
     // 음량 (0.0 ~ 1.0)
     volume: f32,
     // 음소거를 풀 때 돌아갈 음량
@@ -1318,9 +1327,6 @@ impl App {
         let mut clicked = None;
         let mut toggle_pause = false;
         let mut toggle_select = None;
-        // 편집 중에 각 줄이 놓인 위치와, 끌던 줄을 놓았는지
-        let mut rows = Vec::new();
-        let mut dropped = false;
         let mut recheck = false;
         // 기본 스크롤 bar는 평소에 숨어 있으므로, 목록이 넘치면 항상 보이는 모양 사용
         ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
@@ -1329,8 +1335,23 @@ impl App {
             // 기본 최소 높이(64)를 없애서, 공간이 좁아도 하단 영역 뒤로 넘치지 않게 하기
             .min_scrolled_height(0.0)
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                for path in &self.files {
+                ui.spacing_mut().item_spacing.y = ROW_GAP;
+
+                // 끄는 중이면: (원래 번호, 지금 놓으면 갈 번호, 떠 있는 줄의 위치)
+                let top = ui.cursor().top();
+                let moving = self.dragging.as_ref().and_then(|drag| {
+                    let from = self.files.iter().position(|path| path == &drag.path)?;
+                    let pointer = ui.ctx().pointer_latest_pos()?;
+                    let step = drag.height + ROW_GAP;
+                    let floating = pointer.y - drag.grab;
+                    let to = nearest_slot(floating - top, step, self.files.len());
+                    Some((from, to, floating))
+                });
+                let released = !ui.input(|i| i.pointer.primary_down());
+                // 떠 있는 줄을 목록 위에 겹쳐 그릴 위치
+                let mut floating_row = None;
+
+                for (index, path) in self.files.iter().enumerate() {
                     let video = is_video(path);
                     let missing = self.missing.contains(path);
                     // 이 파일이 재생 중이면 Some(일시정지 여부)
@@ -1352,62 +1373,48 @@ impl App {
                         } else {
                             egui::Sense::click()
                         });
-                    let dragged = self.dragging.as_ref() == Some(path);
+                    let dragged = self.dragging.as_ref().is_some_and(|d| &d.path == path);
+                    // 끄는 줄이 지나가면 다른 줄은 한 칸 비켜 주기
+                    let shift = match (&self.dragging, moving) {
+                        (Some(drag), Some((from, to, _))) if !dragged => {
+                            shift_slots(index, from, to) as f32 * (drag.height + ROW_GAP)
+                        }
+                        _ => 0.0,
+                    };
+                    // 비키는 움직임은 부드럽게. 놓은 순간에는 새 자리에서 바로 시작
+                    let dropping = released && moving.is_some();
+                    let duration = if dropping { 0.0 } else { SLIDE_SECONDS };
+                    let offset =
+                        ui.ctx()
+                            .animate_value_with_time(row_shift_id(path), shift, duration);
                     let row = ui.scope_builder(builder, |ui| {
                         // 글자를 선택하는 기능이 줄의 클릭을 가로채지 않게 끄기
                         ui.style_mut().interaction.selectable_labels = false;
                         let hovered = ui.response().contains_pointer();
 
-                        let highlighted = dragged || checked.unwrap_or(current.is_some());
-                        // 찾을 수 없는 파일은 흐리게
-                        if missing && checked.is_none() {
+                        let highlighted = checked.unwrap_or(current.is_some());
+                        // 끄는 줄의 원래 자리는 비워 두기 (마우스를 따라 따로 그림)
+                        if dragged {
+                            ui.multiply_opacity(0.0);
+                        } else if missing && checked.is_none() {
+                            // 찾을 수 없는 파일은 흐리게
                             ui.multiply_opacity(0.45);
                         }
-                        file_card(ui, highlighted, hovered && !missing).show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                if let Some(checked) = checked {
-                                    icons::check_mark(ui, checked);
-                                }
-                                extension_badge(ui, path, current.is_some());
-
-                                // 편집 중에는 줄 끝에 끌기 손잡이
-                                let right_to_left =
-                                    egui::Layout::right_to_left(egui::Align::Center);
-                                ui.with_layout(right_to_left, |ui| {
-                                    if checked.is_some() {
-                                        icons::drag_handle(ui);
-                                    }
-
-                                    // 파일 이름은 남은 공간에 왼쪽부터 표시
-                                    let left_to_right =
-                                        egui::Layout::left_to_right(egui::Align::Center);
-                                    ui.with_layout(left_to_right, |ui| {
-                                        let mut name = egui::RichText::new(file_name(path))
-                                            .color(ui.visuals().strong_text_color());
-                                        // 재생 중인 곡은 강조색으로 표시
-                                        if current.is_some() {
-                                            name =
-                                                name.strong().color(ui.visuals().hyperlink_color);
-                                        }
-                                        // 파일 이름 아래에 파일이 있는 위치
-                                        let mut place = location(path);
-                                        if missing {
-                                            place = tr!(
-                                                "파일을 찾을 수 없어요 · {place}",
-                                                "File not found · {place}",
-                                            );
-                                        }
-                                        ui.vertical(|ui| {
-                                            ui.spacing_mut().item_spacing.y = 1.0;
-                                            ui.add(egui::Label::new(name).truncate());
-                                            let place = egui::RichText::new(place).size(11.0);
-                                            ui.add(egui::Label::new(place.weak()).truncate());
-                                        });
-                                    });
-                                });
-                            });
+                        let look = RowLook {
+                            checked,
+                            current: current.is_some(),
+                            missing,
+                        };
+                        let hovered = hovered && !missing && moving.is_none();
+                        let transform =
+                            egui::emath::TSTransform::from_translation(egui::vec2(0.0, offset));
+                        ui.with_visual_transform(transform, |ui| {
+                            file_card(ui, highlighted, hovered)
+                                .show(ui, |ui| row_content(ui, path, look));
                         });
+                        if dragged {
+                            floating_row = Some((index, look));
+                        }
                     });
 
                     // 마우스를 올리면 누를 수 있다는 것과 할 일을 알려주기
@@ -1430,12 +1437,17 @@ impl App {
                         None => tr!("눌러서 재생", "Click to play"),
                     };
                     let response = row.response;
-                    rows.push(response.rect);
-                    if checked.is_some() {
-                        if response.drag_started() {
-                            self.dragging = Some(path.clone());
-                        }
-                        dropped |= dragged && response.drag_stopped();
+                    if checked.is_some()
+                        && response.drag_started()
+                        && let Some(pointer) = response.interact_pointer_pos()
+                    {
+                        // 누른 곳을 기준으로 해야 줄이 튀지 않음
+                        let origin = ui.input(|i| i.pointer.press_origin());
+                        self.dragging = Some(Drag {
+                            path: path.clone(),
+                            grab: origin.unwrap_or(pointer).y - response.rect.top(),
+                            height: response.rect.height(),
+                        });
                     }
                     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                     // 끄는 중에는 설명이 놓을 위치를 가리지 않게 숨기기
@@ -1458,30 +1470,39 @@ impl App {
                     }
                 }
 
-                // 끄는 중이면 놓일 위치에 선을 보여주고, 놓으면 옮기기
-                let from = self
-                    .dragging
-                    .as_ref()
-                    .and_then(|path| self.files.iter().position(|p| p == path));
-                if let Some(from) = from
-                    && let Some(pointer) = ui.ctx().pointer_interact_pos()
+                // 끄는 줄은 목록 위에 떠서 마우스를 따라감
+                if let Some((from, to, floating)) = moving
+                    && let Some(drag) = &self.dragging
                 {
-                    let to = drop_index(&rows, pointer.y);
-                    let y = match rows.get(to) {
-                        Some(row) => row.top() - 3.0,
-                        None => rows.last().map_or(0.0, |row| row.bottom() + 3.0),
-                    };
-                    let color = theme::palette(ui).point;
-                    ui.painter()
-                        .hline(ui.max_rect().x_range(), y, egui::Stroke::new(3.0, color));
+                    let step = drag.height + ROW_GAP;
+                    if let Some((index, look)) = floating_row {
+                        let rect = egui::Rect::from_min_size(
+                            egui::pos2(ui.cursor().left(), floating),
+                            egui::vec2(ui.available_width(), drag.height),
+                        );
+                        floating_card(ui, rect, &self.files[index], look);
+                    }
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-                    scroll_near_edge(ui, pointer.y);
-                    if dropped {
-                        self.move_file(from, to);
+
+                    if released {
+                        let path = drag.path.clone();
+                        // 놓은 곳에서 새 자리까지 미끄러져 들어가게 하기
+                        let from_slot = floating - (top + to as f32 * step);
+                        // 다른 줄은 이미 새 자리에 보이므로 비킨 거리를 바로 없애기
+                        for other in &self.files {
+                            ui.ctx()
+                                .animate_value_with_time(row_shift_id(other), 0.0, 0.0);
+                        }
+                        ui.ctx()
+                            .animate_value_with_time(row_shift_id(&path), from_slot, 0.0);
+                        self.move_file(from, to_insert_position(from, to));
+                        ui.ctx().request_repaint();
+                    } else if let Some(pointer) = ui.ctx().pointer_latest_pos() {
+                        scroll_near_edge(ui, pointer.y);
                     }
                 }
                 // 버튼을 뗐으면 끌기 끝
-                if !ui.input(|i| i.pointer.primary_down()) {
+                if released {
                     self.dragging = None;
                 }
             });
@@ -2112,9 +2133,112 @@ fn drop_overlay(ui: &egui::Ui) {
     }
 }
 
-// 끌어 놓는 위치가 몇 번째 줄 앞인지 (마지막 줄 뒤면 줄의 개수)
-fn drop_index(rows: &[egui::Rect], y: f32) -> usize {
-    rows.iter().filter(|row| row.center().y < y).count()
+// 목록의 줄 사이 간격과, 줄이 비키는 데 걸리는 시간(초)
+const ROW_GAP: f32 = 6.0;
+const SLIDE_SECONDS: f32 = 0.18;
+
+// 줄을 비켜 그리는 거리를 부드럽게 바꿀 때 쓰는 이름
+fn row_shift_id(path: &Path) -> egui::Id {
+    egui::Id::unique(("row-shift", path))
+}
+
+// 목록의 위쪽에서 offset만큼 떨어진 곳이 몇 번째 자리에 가장 가까운지
+fn nearest_slot(offset: f32, step: f32, count: usize) -> usize {
+    let slot = (offset / step).round().max(0.0) as usize;
+    slot.min(count.saturating_sub(1))
+}
+
+// from 번째 줄을 to 번째 자리로 옮길 때, index 번째 줄이 비켜야 하는 칸 수
+fn shift_slots(index: usize, from: usize, to: usize) -> i32 {
+    if from < index && index <= to {
+        -1
+    } else if to <= index && index < from {
+        1
+    } else {
+        0
+    }
+}
+
+// to 번째 자리에 놓으려면 move_item에 알려줄 "몇 번째 앞"
+fn to_insert_position(from: usize, to: usize) -> usize {
+    if to > from { to + 1 } else { to }
+}
+
+// 목록 한 줄의 모양을 정하는 값
+#[derive(Clone, Copy)]
+struct RowLook {
+    // 편집 중이면 Some(이 파일을 골랐는지)
+    checked: Option<bool>,
+    // 재생 중인 파일인지
+    current: bool,
+    missing: bool,
+}
+
+// 목록 한 줄의 내용: 선택 표시, 확장자, 이름과 위치, 끌기 손잡이
+fn row_content(ui: &mut egui::Ui, path: &Path, look: RowLook) {
+    ui.set_width(ui.available_width());
+    ui.horizontal(|ui| {
+        if let Some(checked) = look.checked {
+            icons::check_mark(ui, checked);
+        }
+        extension_badge(ui, path, look.current);
+
+        // 편집 중에는 줄 끝에 끌기 손잡이
+        let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+        ui.with_layout(right_to_left, |ui| {
+            if look.checked.is_some() {
+                icons::drag_handle(ui);
+            }
+
+            // 파일 이름은 남은 공간에 왼쪽부터 표시
+            let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
+            ui.with_layout(left_to_right, |ui| {
+                let mut name =
+                    egui::RichText::new(file_name(path)).color(ui.visuals().strong_text_color());
+                // 재생 중인 곡은 강조색으로 표시
+                if look.current {
+                    name = name.strong().color(ui.visuals().hyperlink_color);
+                }
+                // 파일 이름 아래에 파일이 있는 위치
+                let mut place = location(path);
+                if look.missing {
+                    place = tr!(
+                        "파일을 찾을 수 없어요 · {place}",
+                        "File not found · {place}",
+                    );
+                }
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    ui.add(egui::Label::new(name).truncate());
+                    let place = egui::RichText::new(place).size(11.0);
+                    ui.add(egui::Label::new(place.weak()).truncate());
+                });
+            });
+        });
+    });
+}
+
+// 끌고 있는 줄을 다른 줄보다 위에, 그림자와 함께 그리기
+fn floating_card(ui: &mut egui::Ui, rect: egui::Rect, path: &Path, look: RowLook) {
+    let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("floating-row"));
+    let builder = egui::UiBuilder::new()
+        .id_salt("floating-row")
+        .layer_id(layer)
+        .max_rect(rect);
+    let mut floating = ui.new_child(builder);
+    floating.style_mut().interaction.selectable_labels = false;
+
+    let shadow = egui::Shadow {
+        offset: [0, 8],
+        blur: 18,
+        spread: 2,
+        color: egui::Color32::from_black_alpha(120),
+    };
+    let colors = theme::palette(ui);
+    file_card(&floating, true, false)
+        .fill(colors.tint(0.18))
+        .shadow(shadow)
+        .show(&mut floating, |ui| row_content(ui, path, look));
 }
 
 // 끄는 중에 목록의 위나 아래 끝에 가까워지면 자동으로 스크롤
@@ -2675,6 +2799,28 @@ mod tests {
         assert_eq!(seconds(5), 2.0);
         assert_eq!(seconds(42), 3.0);
         assert_eq!(seconds(500), 5.0);
+    }
+
+    #[test]
+    fn rows_make_room_for_the_dragged_row() {
+        // 줄 0을 자리 2로: 1, 2번 줄이 한 칸 위로
+        let shifts = |from, to| (0..4).map(|i| shift_slots(i, from, to)).collect::<Vec<_>>();
+        assert_eq!(shifts(0, 2), [0, -1, -1, 0]);
+        assert_eq!(shifts(3, 1), [0, 1, 1, 0]);
+        assert_eq!(shifts(2, 2), [0, 0, 0, 0]);
+
+        assert_eq!(nearest_slot(-40.0, 54.0, 4), 0);
+        assert_eq!(nearest_slot(80.0, 54.0, 4), 1);
+        assert_eq!(nearest_slot(900.0, 54.0, 4), 3);
+
+        // 자리 번호대로 옮겨지는지 확인
+        for from in 0..4 {
+            for to in 0..4 {
+                let mut items = vec![0, 1, 2, 3];
+                move_item(&mut items, from, to_insert_position(from, to));
+                assert_eq!(items[to], from, "{from} -> {to}");
+            }
+        }
     }
 
     #[test]
