@@ -230,6 +230,31 @@ impl App {
         }
     }
 
+    // 확인을 받은 뒤 파일을 휴지통으로 옮기기
+    fn delete(&mut self, path: PathBuf) {
+        let name = file_name(&path);
+        let answer = rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Warning)
+            .set_title("파일 삭제")
+            .set_description(format!("이 파일을 휴지통으로 옮길까요?\n\n{name}"))
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show();
+        if answer != rfd::MessageDialogResult::Yes {
+            return;
+        }
+
+        // 지우려는 곡이 재생 중이면 먼저 정지 (Windows는 열린 파일을 옮길 수 없음)
+        if self.playing.as_ref().is_some_and(|p| p.path == path) {
+            self.playing = None;
+        }
+
+        self.status = match move_to_trash(&path) {
+            Ok(()) => format!("휴지통으로 옮겼어요: {name}"),
+            Err(e) => format!("오류: 삭제할 수 없어요: {e}"),
+        };
+        self.refresh_files();
+    }
+
     // 저장된 mp3 목록 보여주기
     fn file_list(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
@@ -239,8 +264,9 @@ impl App {
             }
         });
 
-        // 목록을 그리는 동안에는 클릭한 파일만 기억하고, 재생은 그린 뒤에 하기
+        // 목록을 그리는 동안에는 클릭한 파일만 기억하고, 재생과 삭제는 그린 뒤에 하기
         let mut clicked = None;
+        let mut to_delete = None;
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
@@ -250,17 +276,31 @@ impl App {
                         if ui.button(symbol("►")).clicked() {
                             clicked = Some(path.clone());
                         }
-                        let mut name = egui::RichText::new(file_name(path));
-                        if is_current {
-                            name = name.strong();
-                        }
-                        ui.add(egui::Label::new(name).truncate());
+                        // 삭제 버튼은 재생 버튼과 헷갈리지 않도록 오른쪽 끝에 배치
+                        let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+                        ui.with_layout(right_to_left, |ui| {
+                            if ui.button(symbol("×")).on_hover_text("삭제").clicked() {
+                                to_delete = Some(path.clone());
+                            }
+                            // 파일 이름은 남은 공간에 왼쪽부터 표시
+                            let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
+                            ui.with_layout(left_to_right, |ui| {
+                                let mut name = egui::RichText::new(file_name(path));
+                                if is_current {
+                                    name = name.strong();
+                                }
+                                ui.add(egui::Label::new(name).truncate());
+                            });
+                        });
                     });
                 }
             });
 
         if let Some(path) = clicked {
             self.play(path);
+        }
+        if let Some(path) = to_delete {
+            self.delete(path);
         }
     }
 
@@ -552,6 +592,21 @@ fn list_mp3(folder: &Path) -> std::io::Result<Vec<PathBuf>> {
     });
 
     Ok(files)
+}
+
+// 파일을 휴지통으로 옮기기 (완전히 지우지 않으므로 되살릴 수 있음)
+fn move_to_trash(path: &Path) -> Result<(), trash::Error> {
+    #[allow(unused_mut)] // Mac이 아니면 바꿀 설정이 없음
+    let mut context = trash::TrashContext::new();
+
+    // Mac의 기본 방식은 Finder 제어 권한을 요청하므로, 권한이 필요 없는 방식 사용
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        context.set_delete_method(DeleteMethod::NsFileManager);
+    }
+
+    context.delete(path)
 }
 
 // 소리 출력 장치를 열고 파일 재생 시작하기
