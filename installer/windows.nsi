@@ -4,9 +4,10 @@
 Unicode true
 !include "MUI2.nsh"
 
-!define NAME "유투브내려받기"
-; 이름을 바꾸기 전의 값. 설치 폴더는 그대로 써서 이전 설치본을 덮어씀
+!define NAME "YouTube Download"
+; 이전에 쓰던 이름들. 설치 폴더는 처음 이름을 그대로 써서 이전 설치본을 덮어씀
 !define OLD_NAME "YouTube MP3"
+!define OLD_NAME_KO "유투브내려받기"
 !define PUBLISHER "아이티해결단(이혁)"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\yt-mp3"
 
@@ -58,6 +59,8 @@ Section "Install"
     ; 이전 이름의 바로 가기 지우기
     Delete "$SMPROGRAMS\${OLD_NAME}.lnk"
     Delete "$DESKTOP\${OLD_NAME}.lnk"
+    Delete "$SMPROGRAMS\${OLD_NAME_KO}.lnk"
+    Delete "$DESKTOP\${OLD_NAME_KO}.lnk"
 
     CreateShortcut "$SMPROGRAMS\${NAME}.lnk" "$INSTDIR\yt-mp3.exe" "" "$INSTDIR\icon.ico"
     CreateShortcut "$DESKTOP\${NAME}.lnk" "$INSTDIR\yt-mp3.exe" "" "$INSTDIR\icon.ico"

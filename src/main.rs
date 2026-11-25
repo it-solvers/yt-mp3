@@ -27,7 +27,7 @@ fn main() -> eframe::Result {
     };
 
     eframe::run_native(
-        "유투브내려받기",
+        "YouTube Download",
         options,
         Box::new(|cc| Ok(Box::new(App::new(cc.storage)))),
     )

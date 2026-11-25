@@ -39,40 +39,24 @@ def stroke(x, y, points, radius=22):
     return distance - radius
 
 
+def screen(x, y):
+    """받침대가 있는 영상 화면."""
+    body = rounded_box(x, y, 512, 352, 270, 190, 56)
+    stand = rounded_box(x, y, 512, 566, 110, 16, 16)
+    return min(body, stand)
+
+
+def play(x, y):
+    """화면 가운데의 재생 삼각형."""
+    return polygon(x, y, [(442, 262), (620, 352), (442, 442)])
+
+
 def download_mark(x, y):
     """받침대로 내려오는 화살표. 내려받기를 뜻함."""
-    shaft = rounded_box(x, y, 512, 220, 46, 62, 8)
-    head = polygon(x, y, [(396, 272), (628, 272), (512, 376)])
-    tray = stroke(x, y, [(318, 330), (318, 424), (706, 424), (706, 330)])
+    shaft = rounded_box(x, y, 512, 652, 40, 46, 8)
+    head = polygon(x, y, [(408, 686), (616, 686), (512, 782)])
+    tray = stroke(x, y, [(330, 766), (330, 842), (694, 842), (694, 766)])
     return min(shaft, head, tray)
-
-
-def letters_mp(x, y, top):
-    """"MP" 글자. top은 글자의 위쪽 위치, 글자 높이는 120."""
-    bottom = top + 120
-    m = [(254, bottom), (254, top), (332, top + 76), (410, top), (410, bottom)]
-    p = [(484, bottom), (484, top), (562, top), (596, top + 13), (604, top + 34),
-         (596, top + 55), (562, top + 68), (484, top + 68)]
-    return min(stroke(x, y, m), stroke(x, y, p))
-
-
-def label_mp3(x, y, top=498):
-    middle, bottom = top + 60, top + 120
-    upper = [(674, top), (738, top), (768, top + 15), (768, top + 45),
-             (738, middle), (700, middle)]
-    lower = [(738, middle), (768, top + 75), (768, top + 105),
-             (738, bottom), (674, bottom)]
-    return min(letters_mp(x, y, top), stroke(x, y, upper), stroke(x, y, lower))
-
-
-def label_mp4(x, y, top=708):
-    slant = [(748, top), (662, top + 82), (780, top + 82)]
-    upright = [(748, top), (748, top + 120)]
-    return min(letters_mp(x, y, top), stroke(x, y, slant), stroke(x, y, upright))
-
-
-def symbol(x, y):
-    return min(download_mark(x, y), label_mp3(x, y), label_mp4(x, y))
 
 
 def coverage(distance):
@@ -89,9 +73,12 @@ def pixel(x, y):
     alpha = coverage(rounded_box(x, y, 512, 512, 412, 412, 186))
     if alpha == 0:
         return (0, 0, 0, 0)
-    # 배경은 위의 밝은 빨강에서 아래의 진한 자주색으로
-    color = mix((255, 94, 87), (142, 36, 122), (y - 100) / 824)
-    color = mix(color, (255, 255, 255), coverage(symbol(x, y)))
+    # 배경은 위의 흰색에서 아래의 옅은 회색으로
+    color = mix((255, 255, 255), (228, 228, 232), (y - 100) / 824)
+    # 아래에 있는 것부터 차례로 겹쳐 그리기
+    color = mix(color, (224, 36, 36), coverage(screen(x, y)))
+    color = mix(color, (255, 255, 255), coverage(play(x, y)))
+    color = mix(color, (44, 44, 50), coverage(download_mark(x, y)))
     return (*(round(c) for c in color), round(alpha * 255))
 
 
