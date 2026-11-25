@@ -345,32 +345,34 @@ impl App {
         }
     }
 
-    // 목록 위의 재생 영역: 일시정지/정지, 곡 이름, 음량, 탐색 bar
+    // 목록 위의 재생 영역: 일시정지/정지, 곡 이름, 음량, 탐색 bar.
+    // 재생 중인 곡이 없어도 같은 모양을 보여주고, 재생 조작만 비활성화
     fn player_bar(&mut self, ui: &mut egui::Ui) {
-        let Some(playing) = &mut self.playing else {
-            ui.centered_and_justified(|ui| {
-                let hint = tr!("재생할 곡을 선택하세요", "Select a track to play");
-                ui.label(egui::RichText::new(hint).weak());
-            });
-            return;
-        };
-
         // slider의 채워진 부분은 진한 강조색, 빈 부분은 바탕과 구별되는 색
         let colors = theme::palette(ui);
         ui.visuals_mut().selection.bg_fill = colors.point;
         // 손잡이에도 쓰이는 색이므로 불투명하게
         ui.visuals_mut().widgets.inactive.bg_fill = colors.edge.lerp_to_gamma(colors.ink, 0.2);
 
+        let active = self.playing.is_some();
+        let playing_now = self.playing.as_ref().is_some_and(|p| !p.player.is_paused());
+
+        let mut toggle = false;
         let mut stop = false;
         ui.horizontal(|ui| {
-            if playing.player.is_paused() {
-                if icons::button(ui, Icon::Play, tr!("계속 재생", "Resume")).clicked() {
-                    playing.player.play();
-                }
-            } else if icons::button(ui, Icon::Pause, tr!("일시정지", "Pause")).clicked() {
-                playing.player.pause();
-            }
-            stop = icons::button(ui, Icon::Stop, tr!("정지", "Stop")).clicked();
+            ui.add_enabled_ui(active, |ui| {
+                ui.horizontal(|ui| {
+                    let (icon, hint) = if playing_now {
+                        (Icon::Pause, tr!("일시정지", "Pause"))
+                    } else if active {
+                        (Icon::Play, tr!("계속 재생", "Resume"))
+                    } else {
+                        (Icon::Play, tr!("재생", "Play"))
+                    };
+                    toggle = icons::button(ui, icon, hint).clicked();
+                    stop = icons::button(ui, Icon::Stop, tr!("정지", "Stop")).clicked();
+                });
+            });
 
             // 음량은 오른쪽 끝에 두고, 곡 이름은 남은 공간에 표시
             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
@@ -382,65 +384,82 @@ impl App {
                 let slider = egui::Slider::new(&mut self.volume, 0.0..=1.0)
                     .show_value(false)
                     .trailing_fill(true);
+                // 음량은 곡을 고르기 전에도 조절할 수 있음
                 if ui
                     .add(slider)
                     .on_hover_text(format!("{percent:.0}%"))
                     .changed()
+                    && let Some(playing) = &self.playing
                 {
                     playing.player.set_volume(self.volume);
                 }
                 icons::picture(ui, Icon::Speaker, tr!("음량", "Volume"));
 
-                let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
-                ui.with_layout(left_to_right, |ui| {
-                    let name = egui::RichText::new(file_name(&playing.path)).strong();
-                    ui.add(egui::Label::new(name).truncate());
-                });
+                if let Some(playing) = &self.playing {
+                    let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
+                    ui.with_layout(left_to_right, |ui| {
+                        let name = egui::RichText::new(file_name(&playing.path)).strong();
+                        ui.add(egui::Label::new(name).truncate());
+                    });
+                }
             });
         });
 
+        // 현재 위치, 전체 길이, 끄는 중인 위치
+        let (position, total, seeking) = match &self.playing {
+            Some(p) => (p.player.get_pos(), p.total, p.seeking),
+            None => (Duration::ZERO, None, None),
+        };
+        // 전체 길이를 알아야 탐색할 수 있음
+        let total_secs = total.map_or(0.0, |t| t.as_secs_f32());
+        // 끄는 중에는 실제 재생 위치 대신 끌고 있는 위치를 보여주기
+        let mut seconds = seeking.unwrap_or(position.as_secs_f32());
+        if total.is_some() {
+            seconds = seconds.min(total_secs);
+        }
+
         ui.spacing_mut().interact_size.y = 18.0;
         ui.horizontal(|ui| {
-            let position = playing.player.get_pos();
-
-            // 전체 길이를 모르면 탐색할 수 없으므로 재생 시간만 표시
-            let Some(total) = playing.total else {
-                ui.label(format_time(position));
-                return;
-            };
-
-            let total_secs = total.as_secs_f32();
-            // 끄는 중에는 실제 재생 위치 대신 끌고 있는 위치를 보여주기
-            let mut seconds = playing
-                .seeking
-                .unwrap_or_else(|| position.as_secs_f32().min(total_secs));
-
             ui.label(format_time(Duration::from_secs_f32(seconds)));
 
             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
             ui.with_layout(right_to_left, |ui| {
-                ui.label(format_time(total));
+                ui.label(format_time(total.unwrap_or_default()));
 
                 // 두 시간 표시 사이를 탐색 bar로 채우기
                 ui.spacing_mut().slider_width = ui.available_width();
-                let slider = ui.add(
-                    egui::Slider::new(&mut seconds, 0.0..=total_secs)
-                        .show_value(false)
-                        .trailing_fill(true),
-                );
+                // 길이가 0인 slider는 만들 수 없으므로 최소 1초로
+                let mut bar = seconds;
+                let slider = egui::Slider::new(&mut bar, 0.0..=total_secs.max(1.0))
+                    .show_value(false)
+                    .trailing_fill(true);
+                let slider = ui.add_enabled(total.is_some(), slider);
 
+                let Some(playing) = &mut self.playing else {
+                    return;
+                };
+                if total.is_none() {
+                    return;
+                }
                 if slider.dragged() {
-                    playing.seeking = Some(seconds);
+                    playing.seeking = Some(bar);
                 } else if slider.drag_stopped() || slider.changed() {
                     // 마우스를 놓았을 때 한 번만 이동하기
                     playing.seeking = None;
-                    if let Err(e) = playing.player.try_seek(Duration::from_secs_f32(seconds)) {
+                    if let Err(e) = playing.player.try_seek(Duration::from_secs_f32(bar)) {
                         self.status = tr!("오류: 이동할 수 없어요: {e}", "Error: cannot seek: {e}");
                     }
                 }
             });
         });
 
+        if toggle && let Some(playing) = &self.playing {
+            if playing.player.is_paused() {
+                playing.player.play();
+            } else {
+                playing.player.pause();
+            }
+        }
         if stop {
             self.playing = None;
         }
