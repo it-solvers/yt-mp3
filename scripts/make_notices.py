@@ -10,6 +10,7 @@
 import argparse
 import json
 import subprocess
+import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -64,11 +65,33 @@ def packages(target):
     return sorted((by_id[i] for i in found), key=lambda p: (p["name"], p["version"]))
 
 
-def rust_section(target):
+def summary(found):
+    """license 종류별로 library 이름만 모은 요약."""
+    groups = {}
+    for package in found:
+        license_name = package["license"] or "see license text"
+        groups.setdefault(license_name, []).append(
+            f'{package["name"]} {package["version"]}'
+        )
+    # 많이 쓰는 license부터
+    ordered = sorted(groups.items(), key=lambda item: (-len(item[1]), item[0]))
+    return "\n\n".join(
+        f"{license_name} ({len(names)})\n"
+        + textwrap.fill(
+            ", ".join(names), width=78, initial_indent="  ",
+            subsequent_indent="  ", break_long_words=False, break_on_hyphens=False,
+        )
+        for license_name, names in ordered
+    )
+
+
+def rust_sections(target):
+    """Rust library 부분을 (제목, 내용) 목록으로 만들기."""
+    found = packages(target)
     listing = []
     # 같은 내용의 license 전문은 한 번만 싣고, 사용하는 library 이름을 모아 두기
     texts = {}
-    for package in packages(target):
+    for package in found:
         name = f'{package["name"]} {package["version"]}'
         folder = Path(package["manifest_path"]).parent
         authors = ", ".join(package["authors"]) or "(see source)"
@@ -86,17 +109,21 @@ def rust_section(target):
         for file in sorted(files):
             texts.setdefault(read(file), []).append(f"{name} ({file.name})")
 
-    result = title("Rust libraries") + "\n" + "\n\n".join(listing)
-    result += title("License texts included with the Rust libraries")
-    for text, users in texts.items():
-        result += f"\n--- {', '.join(users)} ---\n\n{text}\n"
-    result += title(
-        "Standard license texts\n"
-        "(for libraries that do not ship their own license file)"
+    included = "".join(
+        f"\n--- {', '.join(users)} ---\n\n{text}\n" for text, users in texts.items()
     )
-    for file in sorted(STANDARD.glob("*.txt")):
-        result += f"\n--- {file.stem} ---\n\n{read(file)}\n"
-    return result
+    standard = "".join(
+        f"\n--- {file.stem} ---\n\n{read(file)}\n"
+        for file in sorted(STANDARD.glob("*.txt"))
+    )
+    return [
+        ("Rust libraries by license / license별 Rust library", "\n" + summary(found)),
+        ("Rust library details / Rust library 상세 정보", "\n" + "\n\n".join(listing)),
+        ("License texts included with the Rust libraries / library에 포함된 license 전문",
+         included),
+        ("Standard license texts / 표준 license 전문\n"
+         "(for libraries that do not ship their own license file)", standard),
+    ]
 
 
 def main():
@@ -113,11 +140,22 @@ def main():
         "이 프로그램은 아래의 오픈소스 software를 포함하거나 사용합니다.\n"
         "각 구성요소에는 해당 license가 적용됩니다."
     )
-    for heading, *files in args.section:
-        document += title(heading)
-        for file in files:
-            document += f"\n{read(file)}\n"
-    document += rust_section(args.target or host_target())
+    sections = [
+        (heading, "".join(f"\n{read(file)}\n" for file in files))
+        for heading, *files in args.section
+    ]
+    sections += rust_sections(args.target or host_target())
+
+    # 목차: 본문 제목과 같은 번호를 붙여서 검색으로 찾아갈 수 있게 하기
+    document += title("CONTENTS / 목차")
+    for number, (heading, _) in enumerate(sections, 1):
+        document += f"\n[{number}] {heading.splitlines()[0]}"
+    document += (
+        "\n\nTo jump to a section, search for its number, e.g. [1]."
+        "\n찾기 기능에서 [1]처럼 번호를 검색하면 해당 부분으로 이동합니다."
+    )
+    for number, (heading, body) in enumerate(sections, 1):
+        document += title(f"[{number}] {heading}") + body
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)

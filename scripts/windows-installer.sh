@@ -120,11 +120,11 @@ INFO
 
 python3 -I scripts/make_notices.py "$stage/licenses/THIRD-PARTY-NOTICES.txt" \
     --target "$target" \
-    --section "ffmpeg, ffprobe $ffmpeg_version" "$downloads/ffmpeg-info.txt" \
+    --section "ffmpeg, ffprobe $ffmpeg_version (GPL-3.0-or-later)" "$downloads/ffmpeg-info.txt" \
         "$stage/licenses/ffmpeg-README.txt" "$downloads/gpl-3.0.txt" \
-    --section "yt-dlp $ytdlp_version" "$downloads/yt-dlp-info.txt" \
+    --section "yt-dlp $ytdlp_version (GPL-3.0-or-later)" "$downloads/yt-dlp-info.txt" \
         "$downloads/yt-dlp-LICENSE.txt" "$downloads/yt-dlp-THIRD-PARTY.txt" \
-    --section "deno $deno_version" "$downloads/deno-info.txt" "$downloads/deno-LICENSE.md"
+    --section "deno $deno_version (MIT)" "$downloads/deno-info.txt" "$downloads/deno-LICENSE.md"
 
 python3 scripts/make_ico.py assets/icon.png "$work/icon.ico"
 

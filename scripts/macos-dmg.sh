@@ -118,11 +118,11 @@ INFO
 
 python3 -I scripts/make_notices.py "$licenses/THIRD-PARTY-NOTICES.txt" \
     --target aarch64-apple-darwin \
-    --section "ffmpeg, ffprobe $ffmpeg_version" "$downloads/ffmpeg-info.txt" \
+    --section "ffmpeg, ffprobe $ffmpeg_version (GPL-3.0-or-later)" "$downloads/ffmpeg-info.txt" \
         "$downloads/ffmpeg-version.txt" "$downloads/gpl-3.0.txt" \
-    --section "yt-dlp $ytdlp_version" "$downloads/yt-dlp-info.txt" \
+    --section "yt-dlp $ytdlp_version (GPL-3.0-or-later)" "$downloads/yt-dlp-info.txt" \
         "$downloads/yt-dlp-LICENSE.txt" "$downloads/yt-dlp-THIRD-PARTY.txt" \
-    --section "deno $deno_version" "$downloads/deno-info.txt" "$downloads/deno-LICENSE.md"
+    --section "deno $deno_version (MIT)" "$downloads/deno-info.txt" "$downloads/deno-LICENSE.md"
 
 # 파일을 추가했으므로 다시 서명하고 확인
 # (함께 담은 도구는 배포처의 서명을 그대로 유지)
