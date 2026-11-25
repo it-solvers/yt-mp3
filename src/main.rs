@@ -445,7 +445,12 @@ impl App {
                 ui.multiply_opacity(opacity);
                 // 글자를 선택하는 기능이 클릭을 가로채지 않게 끄기
                 ui.style_mut().interaction.selectable_labels = false;
-                popup_frame(ui).show(ui, |ui| {
+                // 뒤의 목록과 구별되도록 강조색을 옅게 깐 바탕
+                let colors = theme::palette(ui);
+                let frame = popup_frame(ui)
+                    .fill(colors.tint(0.28))
+                    .stroke(egui::Stroke::new(1.0, colors.tint(0.6)));
+                frame.show(ui, |ui| {
                     ui.set_width(width);
                     let strong = ui.visuals().strong_text_color();
                     if let Some(title) = &toast.title {
@@ -455,7 +460,10 @@ impl App {
                     let text = egui::RichText::new(&toast.text).color(strong);
                     ui.add(egui::Label::new(text).wrap());
                     if let Some(place) = &toast.place {
-                        let place = egui::RichText::new(place).size(11.0).weak();
+                        // 색이 있는 바탕에서도 읽히도록 글자색을 조금만 흐리게
+                        let place = egui::RichText::new(place)
+                            .size(11.0)
+                            .color(colors.veil(0.65));
                         ui.add(egui::Label::new(place).wrap());
                     }
                 });
