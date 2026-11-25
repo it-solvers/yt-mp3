@@ -24,6 +24,8 @@ pub enum Icon {
     Folder,
     Download,
     Speaker,
+    // 음소거
+    Muted,
     // 프로그램 정보
     Info,
     // 언어 바꾸기
@@ -176,6 +178,28 @@ pub fn drag_handle(ui: &mut Ui) {
         ];
         ui.painter().line_segment(line, Stroke::new(2.0, color));
     }
+}
+
+// 배경 없는 작은 버튼. 마우스를 올리면 옅은 원이 보임
+pub fn ghost_button(ui: &mut Ui, icon: Icon, label: String) -> Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
+    describe(&response, ui, &label);
+
+    if ui.is_rect_visible(rect) {
+        let colors = palette(ui);
+        let color = if response.hovered() {
+            ui.painter()
+                .circle_filled(rect.center(), rect.width() / 2.0, colors.veil(0.12));
+            colors.ink
+        } else {
+            colors.shade(0.55)
+        };
+        paint(ui.painter(), rect.shrink(6.0), icon, color);
+    }
+
+    response
+        .on_hover_cursor(CursorIcon::PointingHand)
+        .on_hover_text(label)
 }
 
 // 설명용 그림 (누를 수 없음). 배경 없이 그려서 버튼과 구별
@@ -359,6 +383,22 @@ fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 wave.iter().map(|&(x, y)| at(x, y)).collect(),
                 Stroke::new(rect.width() * 0.13, color),
             ));
+        }
+        Icon::Muted => {
+            // 스피커와 × 표시
+            block(0.00, 0.30, 0.26, 0.70, 1);
+            fill(
+                vec![
+                    at(0.22, 0.30),
+                    at(0.58, 0.02),
+                    at(0.58, 0.98),
+                    at(0.22, 0.70),
+                ],
+                color,
+            );
+            let line = Stroke::new(rect.width() * 0.12, color);
+            painter.line_segment([at(0.70, 0.35), at(1.00, 0.65)], line);
+            painter.line_segment([at(1.00, 0.35), at(0.70, 0.65)], line);
         }
         Icon::Info => {
             // 원 안의 i

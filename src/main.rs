@@ -124,6 +124,8 @@ struct App {
     orders: HashMap<String, Vec<String>>,
     // 음량 (0.0 ~ 1.0)
     volume: f32,
+    // 음소거를 풀 때 돌아갈 음량
+    unmuted: f32,
     repeat: Repeat,
     // 다음 곡을 무작위로 고를지
     shuffle: bool,
@@ -203,6 +205,9 @@ impl App {
         let volume = saved("volume")
             .and_then(|v| v.parse::<f32>().ok())
             .map_or(1.0, |v| v.clamp(0.0, 1.0));
+        let unmuted = saved("unmuted")
+            .and_then(|v| v.parse::<f32>().ok())
+            .map_or(1.0, |v| v.clamp(0.0, 1.0));
         let repeat = match saved("repeat").as_deref() {
             Some("all") => Repeat::All,
             Some("one") => Repeat::One,
@@ -235,6 +240,7 @@ impl App {
             dragging: None,
             orders: saved("order").map(|v| parse_orders(&v)).unwrap_or_default(),
             volume,
+            unmuted,
             repeat,
             shuffle,
             history: Vec::new(),
@@ -373,6 +379,26 @@ impl App {
         }
     }
 
+    // 재생 중인 곡에 지금 음량 적용
+    fn apply_volume(&self) {
+        if let Some(playing) = &self.playing {
+            playing.player.set_volume(self.volume);
+        }
+    }
+
+    // 음소거하거나, 음소거 전의 음량으로 되돌리기
+    fn toggle_mute(&mut self) {
+        if self.volume > 0.0 {
+            self.unmuted = self.volume;
+            self.volume = 0.0;
+        } else if self.unmuted > 0.0 {
+            self.volume = self.unmuted;
+        } else {
+            self.volume = 1.0;
+        }
+        self.apply_volume();
+    }
+
     // 목록에서 직접 고른 곡 재생하기
     fn choose(&mut self, path: PathBuf) {
         // 섞기 중에는 방금 듣던 곡으로 돌아갈 수 있게 기억
@@ -508,20 +534,30 @@ impl App {
                 // 손잡이가 너무 커지지 않도록 slider는 낮게
                 ui.spacing_mut().interact_size.y = 18.0;
                 let percent = self.volume * 100.0;
+                let before = self.volume;
                 let slider = egui::Slider::new(&mut self.volume, 0.0..=1.0)
                     .show_value(false)
                     .trailing_fill(true);
                 // 음량은 곡을 고르기 전에도 조절할 수 있음
-                if ui
-                    .add(slider)
-                    .on_hover_text(format!("{percent:.0}%"))
-                    .changed()
-                    && let Some(playing) = &self.playing
-                {
-                    playing.player.set_volume(self.volume);
+                let response = ui.add(slider).on_hover_text(format!("{percent:.0}%"));
+                // slider로 0까지 내려도 스피커를 눌러 되돌릴 수 있게 이전 음량 기억
+                let silenced = response.clicked() && self.volume == 0.0;
+                if (response.drag_started() || silenced) && before > 0.0 {
+                    self.unmuted = before;
+                }
+                if response.changed() {
+                    self.apply_volume();
                 }
             });
-            icons::picture(ui, Icon::Speaker, tr!("음량", "Volume"));
+            // 스피커를 누르면 음소거, 다시 누르면 이전 음량
+            let (icon, hint) = if self.volume > 0.0 {
+                (Icon::Speaker, tr!("음소거", "Mute"))
+            } else {
+                (Icon::Muted, tr!("음소거 해제", "Unmute"))
+            };
+            if icons::ghost_button(ui, icon, hint).clicked() {
+                self.toggle_mute();
+            }
 
             let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
             ui.with_layout(left_to_right, |ui| {
@@ -926,7 +962,6 @@ impl App {
 
         // 목록을 그리는 동안에는 클릭한 파일만 기억하고, 재생과 삭제는 그린 뒤에 하기
         let mut clicked = None;
-        let mut to_delete = None;
         let mut toggle_pause = false;
         let mut toggle_select = None;
         // 편집 중에 각 줄이 놓인 위치와, 끌던 줄을 놓았는지
@@ -952,7 +987,7 @@ impl App {
                     // 선택 중이면 Some(이 파일을 골랐는지)
                     let checked = self.selected.as_ref().map(|s| s.contains(path));
 
-                    // 줄 전체가 재생 버튼 (선택 중에는 선택 버튼). 안의 삭제 버튼을 누를 때는 삭제만 동작함
+                    // 줄 전체가 재생 버튼 (편집 중에는 선택 버튼).
                     let builder = egui::UiBuilder::new()
                         .id_salt(path)
                         // 편집 중에는 끌어서 순서를 바꿀 수도 있음
@@ -976,18 +1011,12 @@ impl App {
                                 }
                                 extension_badge(ui, path, current.is_some());
 
-                                // 삭제 버튼은 오른쪽 끝에 배치
+                                // 편집 중에는 줄 끝에 끌기 손잡이
                                 let right_to_left =
                                     egui::Layout::right_to_left(egui::Align::Center);
                                 ui.with_layout(right_to_left, |ui| {
-                                    // 편집 중에는 줄마다의 삭제 버튼 대신 손잡이
                                     if checked.is_some() {
                                         icons::drag_handle(ui);
-                                    } else {
-                                        let delete = tr!("삭제", "Delete");
-                                        if icons::button(ui, Icon::Trash, delete).clicked() {
-                                            to_delete = Some(path.clone());
-                                        }
                                     }
 
                                     // 파일 이름은 남은 공간에 왼쪽부터 표시
@@ -1101,9 +1130,6 @@ impl App {
                 self.choose(path);
             }
         }
-        if let Some(path) = to_delete {
-            self.delete(vec![path]);
-        }
     }
 
     // 별도 thread에서 다운로드 시작하기 (화면이 멈추지 않도록)
@@ -1194,6 +1220,7 @@ impl eframe::App for App {
             storage.set_string("folder", folder.to_string());
         }
         storage.set_string("volume", self.volume.to_string());
+        storage.set_string("unmuted", self.unmuted.to_string());
         let repeat = match self.repeat {
             Repeat::Off => "off",
             Repeat::All => "all",
