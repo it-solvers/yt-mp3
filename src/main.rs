@@ -89,8 +89,8 @@ fn copyright() -> String {
     )
 }
 
-// 지원 사이트 안내창의 내용. 실제 지원 범위는 yt-dlp에 따라 달라짐
-const SITES: &str = "YouTube, Instagram, TikTok, X, Facebook, Vimeo, SoundCloud";
+// 지원 사이트 안내창의 내용. 다운로드를 확인한 사이트만 적기
+const SITES: &str = "YouTube, Instagram, TikTok, X, Facebook, SoundCloud";
 
 fn supported_sites(ui: &mut egui::Ui) {
     ui.set_max_width(340.0);
@@ -103,14 +103,16 @@ fn supported_sites(ui: &mut egui::Ui) {
             .color(ui.visuals().hyperlink_color),
     );
     ui.add_space(4.0);
-    ui.label(egui::RichText::new(tr!("{SITES} 등", "{SITES} and more")).color(strong));
+    ui.label(egui::RichText::new(SITES).color(strong));
     ui.separator();
     ui.label(
         egui::RichText::new(tr!(
-            "• YouTube 외에는 확인 전이에요\n\
+            "• SoundCloud는 소리만 받을 수 있어요\n\
+             • 게시물에 따라 받지 못할 수 있어요\n\
              • 로그인이 필요한 콘텐츠는 받을 수 없어요\n\
              • 비공개, DRM 콘텐츠는 받을 수 없어요",
-            "• Only YouTube is tested\n\
+            "• SoundCloud provides audio only\n\
+             • Some posts may fail to download\n\
              • Login-only content is not supported\n\
              • Private or DRM content is not supported",
         ))
