@@ -117,8 +117,6 @@ struct App {
     playing: Option<Playing>,
     // 음량 (0.0 ~ 1.0)
     volume: f32,
-    // 곡이 끝나면 목록의 다음 곡을 이어서 재생할지
-    auto_next: bool,
     repeat: Repeat,
     // 다음 곡을 무작위로 고를지
     shuffle: bool,
@@ -196,7 +194,6 @@ impl App {
         let volume = saved("volume")
             .and_then(|v| v.parse::<f32>().ok())
             .map_or(1.0, |v| v.clamp(0.0, 1.0));
-        let auto_next = saved("auto_next").is_none_or(|v| v != "false");
         let repeat = match saved("repeat").as_deref() {
             Some("all") => Repeat::All,
             Some("one") => Repeat::One,
@@ -226,7 +223,6 @@ impl App {
             files: Vec::new(),
             playing: None,
             volume,
-            auto_next,
             repeat,
             shuffle,
             history: Vec::new(),
@@ -414,7 +410,7 @@ impl App {
         }
     }
 
-    // 곡이 끝까지 재생됐으면 정리하고, 설정에 따라 다음 곡 재생하기
+    // 곡이 끝까지 재생됐으면 정리하고, 반복 설정에 따라 다음 곡 재생하기
     fn check_playing(&mut self) {
         let Some(playing) = &self.playing else {
             return;
@@ -428,9 +424,9 @@ impl App {
 
         let next = match self.repeat {
             Repeat::One => Some(finished),
+            // 전체 반복은 마지막 곡 다음에 처음부터, 반복을 끄면 마지막 곡에서 멈춤
             Repeat::All => self.next_song(&finished, true),
-            Repeat::Off if self.auto_next => self.next_song(&finished, false),
-            Repeat::Off => None,
+            Repeat::Off => self.next_song(&finished, false),
         };
         if let Some(path) = next {
             self.play(path);
@@ -801,13 +797,6 @@ impl App {
                 if icons::button(ui, Icon::Refresh, tr!("새로고침", "Refresh")).clicked() {
                     self.refresh_files();
                 }
-                ui.scope(|ui| {
-                    accent_marks(ui);
-                    ui.checkbox(
-                        &mut self.auto_next,
-                        tr!("다음 곡 자동 재생", "Play next automatically"),
-                    );
-                });
             });
         });
 
@@ -1006,7 +995,6 @@ impl eframe::App for App {
             storage.set_string("folder", folder.to_string());
         }
         storage.set_string("volume", self.volume.to_string());
-        storage.set_string("auto_next", self.auto_next.to_string());
         let repeat = match self.repeat {
             Repeat::Off => "off",
             Repeat::All => "all",
@@ -1275,7 +1263,7 @@ fn popup_frame(ui: &egui::Ui) -> egui::Frame {
         .inner_margin(14)
 }
 
-// radio와 checkbox의 선택 표시는 강조색, 글자는 원래 색
+// radio의 선택 표시는 강조색, 글자는 원래 색
 fn accent_marks(ui: &mut egui::Ui) {
     let colors = theme::palette(ui);
     let visuals = ui.visuals_mut();
