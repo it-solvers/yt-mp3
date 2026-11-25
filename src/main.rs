@@ -41,8 +41,8 @@ fn main() -> eframe::Result {
         &app_name(),
         options,
         Box::new(|cc| {
-            theme::apply(&cc.egui_ctx);
             let app = App::new(cc.storage);
+            theme::apply(&cc.egui_ctx, app.colors);
             // 저장해 둔 언어에 맞게 창 제목 다시 설정
             cc.egui_ctx
                 .send_viewport_cmd(egui::ViewportCommand::Title(app_name()));
@@ -72,8 +72,8 @@ fn copyright() -> String {
 // 지원 사이트 안내창의 내용. 다운로드를 확인한 사이트만 적기
 const SITES: &str = "YouTube, Instagram, TikTok, X, Facebook, SoundCloud";
 
-fn supported_sites(ui: &mut egui::Ui) {
-    ui.set_max_width(340.0);
+// 지원 사이트 목록. notes가 true면 주의할 점도 함께 보여줌
+fn supported_sites(ui: &mut egui::Ui, notes: bool) {
     let strong = ui.visuals().strong_text_color();
 
     ui.label(
@@ -82,22 +82,27 @@ fn supported_sites(ui: &mut egui::Ui) {
             .strong()
             .color(ui.visuals().hyperlink_color),
     );
-    ui.add_space(4.0);
     ui.label(egui::RichText::new(SITES).color(strong));
-    ui.separator();
-    ui.label(
-        egui::RichText::new(tr!(
-            "• SoundCloud는 소리만 받을 수 있어요\n\
-             • 게시물에 따라 받지 못할 수 있어요\n\
-             • 로그인이 필요한 콘텐츠는 받을 수 없어요\n\
-             • 비공개, DRM 콘텐츠는 받을 수 없어요",
-            "• SoundCloud provides audio only\n\
-             • Some posts may fail to download\n\
-             • Login-only content is not supported\n\
-             • Private or DRM content is not supported",
-        ))
-        .color(strong),
-    );
+    if notes {
+        ui.label(
+            egui::RichText::new(tr!(
+                "• SoundCloud는 소리만 받을 수 있어요\n\
+                 • 게시물에 따라 받지 못할 수 있어요\n\
+                 • 로그인, 비공개, DRM 콘텐츠는 안 돼요",
+                "• SoundCloud provides audio only\n\
+                 • Some posts may fail to download\n\
+                 • No login-only, private, or DRM content",
+            ))
+            .color(strong),
+        );
+    }
+}
+
+// 다운로드에 실패했을 때 팝업에 보여줄 내용
+struct Failure {
+    reason: String,
+    // 오류 내용을 복사했는지
+    copied: bool,
 }
 
 // 재생 영역의 내용 높이 (제목 20 + 곡 정보 28 + 재생 버튼 52 + 탐색 bar 18 + 간격)
@@ -110,6 +115,12 @@ struct App {
     status: String,
     // 화면 하단에 보여줄 삭제 결과
     notice: String,
+    // 다운로드 실패 팝업이 열려 있으면 Some
+    failure: Option<Failure>,
+    // 고른 화면 색
+    colors: theme::Choice,
+    // 색상 선택 팝업이 열려 있는지
+    choosing_colors: bool,
     // 다운로드 중이면 Some, 아니면 None
     job: Option<Job>,
     // 저장 폴더에 있는 mp3, mp4 목록
@@ -234,6 +245,16 @@ impl App {
             // 보여줄 안내가 생기기 전까지는 비워 두기
             status: String::new(),
             notice: String::new(),
+            failure: None,
+            colors: theme::Choice {
+                preset: saved("color_preset")
+                    .and_then(|v| v.parse().ok())
+                    .filter(|&i| i < theme::PRESETS.len())
+                    .unwrap_or(0),
+                custom: ["color_dark", "color_light"]
+                    .map(|key| saved(key).and_then(|v| theme::parse_colors(&v))),
+            },
+            choosing_colors: false,
             job: None,
             files: Vec::new(),
             playing: None,
@@ -256,7 +277,7 @@ impl App {
         app
     }
 
-    // 화면 상단: 왼쪽에 앱 이름과 정보 버튼, 오른쪽에 언어 전환 버튼
+    // 화면 상단: 왼쪽에 앱 이름과 정보 버튼, 오른쪽에 색상과 언어 버튼
     fn title_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(app_name()).heading().strong());
@@ -266,6 +287,8 @@ impl App {
             let frame = popup_frame(ui);
             egui::Popup::from_toggle_button_response(&info)
                 .frame(frame)
+                // 안의 내용을 읽는 동안에는 닫히지 않고, 바깥을 누르면 닫힘
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| self.about(ui));
 
             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
@@ -280,13 +303,17 @@ impl App {
                 if icons::button(ui, Icon::Globe, hint.to_string()).clicked() {
                     self.set_language(ui.ctx(), !korean);
                 }
+                let colors = tr!("화면 색상", "Colors");
+                if icons::button(ui, Icon::Palette, colors).clicked() {
+                    self.choosing_colors = true;
+                }
             });
         });
     }
 
-    // 프로그램 정보: 아이콘, 이름, version, 저작권, 오픈소스 license
+    // 프로그램 정보: 아이콘, 이름, version, 지원 사이트, 저작권, 오픈소스 license
     fn about(&mut self, ui: &mut egui::Ui) {
-        ui.set_width(260.0);
+        ui.set_width(290.0);
         let texture = self.icon_texture.get_or_insert_with(|| {
             let icon = app_icon();
             let size = [icon.width as usize, icon.height as usize];
@@ -310,7 +337,11 @@ impl App {
                     .color(strong),
             );
             ui.label(egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).weak());
-            ui.add_space(4.0);
+            ui.separator();
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                supported_sites(ui, true);
+            });
+            ui.separator();
             ui.label(egui::RichText::new(copyright()).size(11.0).color(strong));
             ui.separator();
             let licenses = tr!("오픈소스 라이선스", "Open source licenses");
@@ -318,6 +349,148 @@ impl App {
                 self.open_licenses();
             }
         });
+    }
+
+    // 다운로드 실패 팝업: 오류 내용과 지원 사이트
+    fn failure_dialog(&mut self, ui: &mut egui::Ui) {
+        let Some(failure) = &mut self.failure else {
+            return;
+        };
+        let modal = egui::Modal::new(egui::Id::unique("failure")).frame(popup_frame(ui));
+        let mut close = false;
+        let response = modal.show(ui.ctx(), |ui| {
+            ui.set_width((ui.ctx().content_rect().width() - 80.0).min(340.0));
+            let strong = ui.visuals().strong_text_color();
+            let title = tr!("다운로드에 실패했어요", "Download failed");
+            ui.label(egui::RichText::new(title).size(16.0).strong().color(strong));
+
+            // 긴 오류는 작은 영역 안에서 스크롤
+            egui::Frame::new()
+                .fill(theme::palette(ui).shade(0.14))
+                .corner_radius(8)
+                .inner_margin(8)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    egui::ScrollArea::vertical()
+                        .max_height(80.0)
+                        .show(ui, |ui| {
+                            let reason =
+                                egui::RichText::new(&failure.reason).monospace().size(11.0);
+                            ui.add(egui::Label::new(reason).wrap());
+                        });
+                });
+
+            ui.separator();
+            supported_sites(ui, false);
+            ui.add_space(6.0);
+
+            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), 28.0),
+                right_to_left,
+                |ui| {
+                    close = ui.button(tr!("확인", "OK")).clicked();
+                    let copy = if failure.copied {
+                        tr!("복사했어요", "Copied")
+                    } else {
+                        tr!("오류 내용 복사", "Copy error")
+                    };
+                    if ui.button(copy).clicked() {
+                        ui.ctx().copy_text(failure.reason.clone());
+                        failure.copied = true;
+                    }
+                },
+            );
+        });
+        if close || response.should_close() {
+            self.failure = None;
+        }
+    }
+
+    // 색상 선택 팝업: 미리 만든 조합 고르기와 직접 고르기
+    fn color_dialog(&mut self, ui: &mut egui::Ui) {
+        if !self.choosing_colors {
+            return;
+        }
+        // 직접 고른 색은 지금 보고 있는 화면 모드에 적용
+        let mode = usize::from(!ui.visuals().dark_mode);
+        let before = self.colors;
+        let choice = &mut self.colors;
+
+        let modal = egui::Modal::new(egui::Id::unique("colors")).frame(popup_frame(ui));
+        let mut close = false;
+        let response = modal.show(ui.ctx(), |ui| {
+            ui.set_width(280.0);
+            let strong = ui.visuals().strong_text_color();
+            let title = tr!("화면 색상", "Colors");
+            ui.label(egui::RichText::new(title).size(16.0).strong().color(strong));
+
+            let names = [
+                tr!("하늘", "Sky"),
+                tr!("산호", "Coral"),
+                tr!("연보라", "Lavender"),
+            ];
+            ui.columns(names.len(), |columns| {
+                for (index, (ui, name)) in columns.iter_mut().zip(names).enumerate() {
+                    ui.vertical_centered(|ui| {
+                        let selected = choice.custom[mode].is_none() && choice.preset == index;
+                        if preset_button(ui, theme::PRESETS[index][mode], &name, selected) {
+                            *choice = theme::Choice {
+                                preset: index,
+                                custom: [None, None],
+                            };
+                        }
+                    });
+                }
+            });
+
+            ui.separator();
+            ui.label(egui::RichText::new(tr!("직접 고르기", "Custom")).weak());
+            let mut colors = choice.colors(mode);
+            let labels = [
+                tr!("바탕색", "Background"),
+                tr!("글자색", "Text"),
+                tr!("강조색", "Accent"),
+            ];
+            let mut changed = false;
+            for (color, label) in colors.iter_mut().zip(labels) {
+                ui.horizontal(|ui| {
+                    ui.label(label);
+                    let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+                    ui.with_layout(right_to_left, |ui| {
+                        let mut rgb = [color.r(), color.g(), color.b()];
+                        ui.spacing_mut().interact_size.x = 52.0;
+                        if ui.color_edit_button_srgb(&mut rgb).changed() {
+                            *color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+                            changed = true;
+                        }
+                    });
+                });
+            }
+            if changed {
+                choice.custom[mode] = Some(colors);
+            }
+
+            ui.add_space(6.0);
+            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), 28.0),
+                right_to_left,
+                |ui| {
+                    close = ui.button(tr!("완료", "Done")).clicked();
+                    if ui.button(tr!("처음 색으로", "Reset")).clicked() {
+                        *choice = theme::Choice::default();
+                    }
+                },
+            );
+        });
+
+        if close || response.should_close() {
+            self.choosing_colors = false;
+        }
+        if self.colors != before {
+            theme::apply(ui.ctx(), self.colors);
+        }
     }
 
     fn set_language(&mut self, ctx: &egui::Context, korean: bool) {
@@ -751,18 +924,34 @@ impl App {
         }
     }
 
-    // 화면 위쪽: URL 입력, 저장 버튼, 저장 형식과 위치
+    // 화면 위쪽: URL 입력, 저장 형식, 저장 버튼, 저장 위치
     fn download_form(&mut self, ui: &mut egui::Ui) {
         let has_url = !self.url.trim().is_empty();
         let mut clicked = false;
         let mut entered = false;
 
-        // 저장 버튼과 도움말을 오른쪽에 두고, 입력창이 남은 폭을 채우기
+        // 형식 선택과 저장 버튼을 오른쪽에 두고, 입력창이 남은 폭을 채우기
         let row = egui::vec2(ui.available_width(), 32.0);
         let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
         ui.allocate_ui_with_layout(row, right_to_left, |ui| {
             let label = tr!("저장하기", "Save");
             clicked = icons::primary_button(ui, Icon::Download, label, has_url).clicked();
+
+            let name = |format| match format {
+                Format::Mp3 => tr!("소리 (MP3)", "Audio (MP3)"),
+                Format::Mp4 => tr!("영상 (MP4)", "Video (MP4)"),
+            };
+            ui.scope(|ui| {
+                ui.spacing_mut().interact_size.y = 32.0;
+                egui::ComboBox::from_id_salt("format")
+                    .selected_text(name(self.format))
+                    .width(96.0)
+                    .show_ui(ui, |ui| {
+                        for format in [Format::Mp3, Format::Mp4] {
+                            ui.selectable_value(&mut self.format, format, name(format));
+                        }
+                    });
+            });
 
             // 지울 내용이 있으면 지우기 버튼이 글자를 가리지 않게 오른쪽 여백 넓히기
             let filled = !self.url.is_empty();
@@ -794,31 +983,6 @@ impl App {
         });
 
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.scope(|ui| {
-                accent_marks(ui);
-                ui.radio_value(
-                    &mut self.format,
-                    Format::Mp3,
-                    tr!("MP3 (소리)", "MP3 (audio)"),
-                );
-                ui.radio_value(
-                    &mut self.format,
-                    Format::Mp4,
-                    tr!("MP4 (동영상)", "MP4 (video)"),
-                );
-            });
-
-            // 지원 사이트 안내: 누르면 열리고, 바깥을 누르면 닫힘
-            let sites = tr!("지원 사이트", "Supported sites");
-            let link = ui.link(egui::RichText::new(sites).size(11.0));
-
-            let frame = popup_frame(ui);
-            egui::Popup::from_toggle_button_response(&link)
-                .frame(frame)
-                .show(supported_sites);
-        });
-
         // 저장 폴더는 경로가 다 보이도록 한 줄을 따로 사용
         ui.horizontal(|ui| {
             let change = tr!("저장 폴더 변경", "Change folder");
@@ -1187,7 +1351,14 @@ impl App {
                     let folder = self.folder.display();
                     break tr!("저장 완료! 위치: {folder}", "Saved to: {folder}");
                 }
-                Ok(Update::Done(Err(message))) => break tr!("오류: {message}", "Error: {message}"),
+                // 실패는 상태 줄 대신 팝업으로 알려주기
+                Ok(Update::Done(Err(reason))) => {
+                    self.failure = Some(Failure {
+                        reason,
+                        copied: false,
+                    });
+                    break String::new();
+                }
                 Err(TryRecvError::Empty) => return, // 아직 진행 중
                 Err(TryRecvError::Disconnected) => {
                     break tr!(
@@ -1228,6 +1399,15 @@ impl eframe::App for App {
         }
         storage.set_string("volume", self.volume.to_string());
         storage.set_string("unmuted", self.unmuted.to_string());
+        storage.set_string("color_preset", self.colors.preset.to_string());
+        for (key, custom) in ["color_dark", "color_light"]
+            .into_iter()
+            .zip(self.colors.custom)
+        {
+            // 직접 고른 색이 없으면 빈 값으로 저장해서 이전 값을 지우기
+            let value = custom.map(theme::format_colors).unwrap_or_default();
+            storage.set_string(key, value);
+        }
         let repeat = match self.repeat {
             Repeat::Off => "off",
             Repeat::All => "all",
@@ -1248,6 +1428,9 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let idle = self.job.is_none();
+
+        self.failure_dialog(ui);
+        self.color_dialog(ui);
 
         egui::Panel::top("title")
             .frame(edge_frame(ui))
@@ -1411,10 +1594,7 @@ fn download(
             Some(line) => line.to_string(),
             None => tr!("원인을 알 수 없어요", "unknown reason"),
         };
-        return Err(tr!(
-            "다운로드에 실패했어요\n{reason}",
-            "Download failed\n{reason}"
-        ));
+        return Err(reason);
     }
 
     Ok(())
@@ -1487,6 +1667,40 @@ fn edge_frame(ui: &egui::Ui) -> egui::Frame {
     egui::Frame::side_top_panel(ui.style()).fill(theme::palette(ui).edge)
 }
 
+// 색 조합 하나를 고르는 버튼. 세 색의 견본과 이름을 보여줌
+fn preset_button(ui: &mut egui::Ui, colors: theme::Colors, name: &str, selected: bool) -> bool {
+    let size = egui::vec2(ui.available_width(), 52.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+
+    let palette = theme::palette(ui);
+    let line = if selected {
+        egui::Stroke::new(2.0, palette.point)
+    } else if response.hovered() {
+        egui::Stroke::new(2.0, palette.shade(0.4))
+    } else {
+        egui::Stroke::new(1.0, palette.shade(0.2))
+    };
+    ui.painter()
+        .rect_stroke(rect, 10.0, line, egui::StrokeKind::Inside);
+    for (offset, color) in [-14.0, 0.0, 14.0].into_iter().zip(colors) {
+        let center = egui::pos2(rect.center().x + offset, rect.top() + 18.0);
+        ui.painter().circle_filled(center, 9.0, color);
+        ui.painter()
+            .circle_stroke(center, 9.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
+    }
+    ui.painter().text(
+        egui::pos2(rect.center().x, rect.bottom() - 12.0),
+        egui::Align2::CENTER_CENTER,
+        name,
+        egui::FontId::proportional(12.0),
+        palette.ink,
+    );
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+}
+
 // 안내창의 틀. 뒤의 화면과 구별되도록 강조색 테두리와 조금 밝은 바탕 사용
 fn popup_frame(ui: &egui::Ui) -> egui::Frame {
     let colors = theme::palette(ui);
@@ -1515,20 +1729,6 @@ fn scroll_near_edge(ui: &egui::Ui, y: f32) {
     };
     ui.scroll_with_delta(egui::vec2(0.0, delta));
     ui.ctx().request_repaint();
-}
-
-// radio의 선택 표시는 강조색, 글자는 원래 색
-fn accent_marks(ui: &mut egui::Ui) {
-    let colors = theme::palette(ui);
-    let visuals = ui.visuals_mut();
-    visuals.override_text_color = Some(colors.ink);
-    for widget in [
-        &mut visuals.widgets.inactive,
-        &mut visuals.widgets.hovered,
-        &mut visuals.widgets.active,
-    ] {
-        widget.fg_stroke.color = colors.point;
-    }
 }
 
 // 목록의 파일 한 줄을 감싸는 카드. 재생 중이면 강조색으로 구별

@@ -29,6 +29,8 @@ pub enum Icon {
     Info,
     // 언어 바꾸기
     Globe,
+    // 화면 색상
+    Palette,
     // 목록 편집
     Edit,
     // 음표
@@ -408,6 +410,15 @@ fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 color,
             );
             fill(vec![at(0.07, 0.68), at(0.32, 0.93), at(0.00, 1.00)], color);
+        }
+        Icon::Palette => {
+            // 팔레트: 큰 원과 물감 세 곳
+            let line = Stroke::new(rect.width() * 0.10, color);
+            painter.circle_stroke(rect.center(), rect.width() * 0.50, line);
+            for (x, y) in [(0.30, 0.38), (0.55, 0.24), (0.76, 0.42)] {
+                painter.circle_filled(at(x, y), rect.width() * 0.09, color);
+            }
+            painter.circle_filled(at(0.58, 0.72), rect.width() * 0.15, color);
         }
         Icon::Music => {
             // 두 음표를 잇는 막대, 기둥, 머리
