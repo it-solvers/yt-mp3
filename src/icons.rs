@@ -12,7 +12,13 @@ use eframe::egui::{
 pub enum Icon {
     Play,
     Pause,
-    Stop,
+    // 이전 곡, 다음 곡
+    Previous,
+    Next,
+    // 반복 (전체, 한 곡)과 섞기
+    Repeat,
+    RepeatOne,
+    Shuffle,
     Refresh,
     Trash,
     Folder,
@@ -92,6 +98,69 @@ pub fn clear_button(ui: &mut Ui, rect: Rect, label: String) -> Response {
     response
         .on_hover_cursor(CursorIcon::PointingHand)
         .on_hover_text(label)
+}
+
+// 재생 영역의 큰 원형 버튼. rect 위치에 그림. 재생 중이면 강조색
+pub fn round_button(ui: &mut Ui, rect: Rect, icon: Icon, label: String) -> Response {
+    let response = place(ui, rect, &label);
+    let colors = palette(ui);
+    let hovered = response.hovered();
+    let (fill, glyph) = if matches!(icon, Icon::Pause) {
+        let amount = if hovered { 0.15 } else { 0.0 };
+        (
+            colors.point.lerp_to_gamma(colors.ink, amount),
+            colors.on_point,
+        )
+    } else {
+        let amount = if hovered { 0.22 } else { 0.13 };
+        (colors.veil(amount), colors.ink)
+    };
+    ui.painter()
+        .circle_filled(rect.center(), rect.width() / 2.0, fill);
+    paint(
+        ui.painter(),
+        rect.shrink(rect.width() * 0.31),
+        icon,
+        glyph,
+        fill,
+    );
+    response.on_hover_text(label)
+}
+
+// 배경 없는 버튼. 마우스를 올리면 옅은 원이 보임. 켜진 기능은 강조색
+pub fn flat_button(ui: &mut Ui, rect: Rect, icon: Icon, on: bool, label: String) -> Response {
+    let response = place(ui, rect, &label);
+    let colors = palette(ui);
+    let background = if response.hovered() {
+        let fill = colors.veil(0.12);
+        ui.painter()
+            .circle_filled(rect.center(), rect.width() / 2.0, fill);
+        fill
+    } else {
+        colors.edge
+    };
+    let color = match icon {
+        // 이전, 다음 곡은 밝게. 반복과 섞기는 꺼져 있으면 흐리게
+        Icon::Previous | Icon::Next => colors.ink,
+        _ if on => colors.point,
+        _ => colors.veil(0.45),
+    };
+    paint(
+        ui.painter(),
+        rect.shrink(rect.width() * 0.22),
+        icon,
+        color,
+        background,
+    );
+    response.on_hover_text(label)
+}
+
+// 정해진 위치의 버튼 만들기. 비활성화된 ui에서는 눌리지 않고 흐리게 그려짐
+fn place(ui: &mut Ui, rect: Rect, label: &str) -> Response {
+    let id = ui.scope_id().with(("player", rect.center().x as i32));
+    let response = ui.interact(rect, id, Sense::click());
+    describe(&response, ui, label);
+    response
 }
 
 // 목록 앞의 파일 아이콘 겸 재생 버튼.
@@ -223,7 +292,46 @@ fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32, background: 
             block(0.12, 0.04, 0.40, 0.96, 2);
             block(0.60, 0.04, 0.88, 0.96, 2);
         }
-        Icon::Stop => block(0.08, 0.08, 0.92, 0.92, 3),
+        Icon::Previous => {
+            for x in [0.0, 0.50] {
+                fill(
+                    vec![at(x, 0.50), at(x + 0.50, 0.14), at(x + 0.50, 0.86)],
+                    color,
+                );
+            }
+        }
+        Icon::Next => {
+            for x in [0.0, 0.50] {
+                fill(vec![at(x, 0.14), at(x + 0.50, 0.50), at(x, 0.86)], color);
+            }
+        }
+        Icon::Repeat | Icon::RepeatOne => {
+            // 위와 아래의 꺾인 선과 화살촉이 순환하는 모양
+            let line = Stroke::new(rect.width() * 0.11, color);
+            let top = vec![at(0.08, 0.52), at(0.08, 0.24), at(0.78, 0.24)];
+            let bottom = vec![at(0.92, 0.48), at(0.92, 0.76), at(0.22, 0.76)];
+            painter.add(Shape::line(top, line));
+            painter.add(Shape::line(bottom, line));
+            fill(vec![at(0.74, 0.05), at(1.00, 0.24), at(0.74, 0.43)], color);
+            fill(vec![at(0.26, 0.57), at(0.00, 0.76), at(0.26, 0.95)], color);
+            if matches!(icon, Icon::RepeatOne) {
+                // 가운데의 숫자 1
+                let one = vec![at(0.43, 0.42), at(0.53, 0.37), at(0.53, 0.65)];
+                painter.add(Shape::line(one, line));
+            }
+        }
+        Icon::Shuffle => {
+            // 서로 엇갈리는 두 선과 오른쪽 화살촉
+            let line = Stroke::new(rect.width() * 0.11, color);
+            for (from, to) in [(0.78, 0.22), (0.22, 0.78)] {
+                let path = vec![at(0.02, from), at(0.24, from), at(0.58, to), at(0.78, to)];
+                painter.add(Shape::line(path, line));
+                fill(
+                    vec![at(0.74, to - 0.19), at(1.00, to), at(0.74, to + 0.19)],
+                    color,
+                );
+            }
+        }
         Icon::Refresh => {
             // 오른쪽 위가 열린 굵은 원과 화살촉
             let center = rect.center();

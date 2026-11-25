@@ -99,8 +99,8 @@ fn supported_sites(ui: &mut egui::Ui) {
     );
 }
 
-// 재생 영역의 내용 높이 (버튼 줄 28 + 간격 3 + 탐색 bar 18)
-const PLAYER_HEIGHT: f32 = 49.0;
+// 재생 영역의 내용 높이 (곡 정보 34 + 재생 버튼 52 + 탐색 bar 18 + 간격)
+const PLAYER_HEIGHT: f32 = 110.0;
 
 // 화면이 기억해야 하는 값들
 struct App {
@@ -119,12 +119,27 @@ struct App {
     volume: f32,
     // 곡이 끝나면 목록의 다음 곡을 이어서 재생할지
     auto_next: bool,
+    repeat: Repeat,
+    // 다음 곡을 무작위로 고를지
+    shuffle: bool,
+    // 섞기 중에 지나온 곡. 이전 곡으로 돌아가고 같은 곡을 다시 고르지 않는 데 사용
+    history: Vec<PathBuf>,
     // 다운로드할 때 저장할 형식
     format: Format,
     // 정보창에 보여줄 앱 아이콘. 처음 열 때 만듦
     icon_texture: Option<egui::TextureHandle>,
     // 사용자가 언어를 직접 골랐는지. 고르지 않았으면 시스템 언어를 계속 따름
     language_chosen: bool,
+}
+
+// 반복 방식
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Repeat {
+    Off,
+    // 목록 전체
+    All,
+    // 한 곡
+    One,
 }
 
 // 저장할 형식
@@ -182,6 +197,12 @@ impl App {
             .and_then(|v| v.parse::<f32>().ok())
             .map_or(1.0, |v| v.clamp(0.0, 1.0));
         let auto_next = saved("auto_next").is_none_or(|v| v != "false");
+        let repeat = match saved("repeat").as_deref() {
+            Some("all") => Repeat::All,
+            Some("one") => Repeat::One,
+            _ => Repeat::Off,
+        };
+        let shuffle = saved("shuffle").is_some_and(|v| v == "true");
         let format = match saved("format").as_deref() {
             Some("mp4") => Format::Mp4,
             _ => Format::Mp3,
@@ -206,6 +227,9 @@ impl App {
             playing: None,
             volume,
             auto_next,
+            repeat,
+            shuffle,
+            history: Vec::new(),
             format,
             language_chosen,
             icon_texture: None,
@@ -330,6 +354,66 @@ impl App {
         }
     }
 
+    // 목록의 소리 파일 (동영상 제외)
+    fn songs(&self) -> Vec<PathBuf> {
+        self.files
+            .iter()
+            .filter(|path| !is_video(path))
+            .cloned()
+            .collect()
+    }
+
+    // current 다음에 재생할 곡. wrap이면 끝까지 간 뒤 처음부터 다시
+    fn next_song(&mut self, current: &Path, wrap: bool) -> Option<PathBuf> {
+        let songs = self.songs();
+        if !self.shuffle {
+            return step_song(&songs, current, true, wrap);
+        }
+
+        self.history.push(current.to_path_buf());
+        let mut candidates = unplayed(&songs, &self.history);
+        if candidates.is_empty() && wrap {
+            // 모두 들었으면 방금 곡을 빼고 다시 섞기
+            self.history.clear();
+            candidates = unplayed(&songs, &[current.to_path_buf()]);
+            if candidates.is_empty() {
+                candidates = songs;
+            }
+        }
+        fastrand::choice(candidates)
+    }
+
+    // 이전 곡 버튼: 조금이라도 들었으면 처음부터, 곡의 시작 부분이면 이전 곡
+    fn previous(&mut self) {
+        let Some(playing) = &self.playing else {
+            return;
+        };
+        if playing.player.get_pos() > Duration::from_secs(3) {
+            let path = playing.path.clone();
+            self.play(path);
+            return;
+        }
+
+        let current = playing.path.clone();
+        let previous = if self.shuffle {
+            // 지나온 곡 중에서 지금도 있는 가장 최근 곡
+            std::iter::from_fn(|| self.history.pop()).find(|path| self.files.contains(path))
+        } else {
+            step_song(&self.songs(), &current, false, true)
+        };
+        self.play(previous.unwrap_or(current));
+    }
+
+    // 다음 곡 버튼
+    fn skip(&mut self) {
+        let Some(current) = self.playing.as_ref().map(|p| p.path.clone()) else {
+            return;
+        };
+        if let Some(path) = self.next_song(&current, true) {
+            self.play(path);
+        }
+    }
+
     // 곡이 끝까지 재생됐으면 정리하고, 설정에 따라 다음 곡 재생하기
     fn check_playing(&mut self) {
         let Some(playing) = &self.playing else {
@@ -339,47 +423,27 @@ impl App {
             return;
         }
 
-        let next = next_file(&self.files, &playing.path);
+        let finished = playing.path.clone();
         self.playing = None;
 
-        if let Some(path) = next.filter(|_| self.auto_next) {
+        let next = match self.repeat {
+            Repeat::One => Some(finished),
+            Repeat::All => self.next_song(&finished, true),
+            Repeat::Off if self.auto_next => self.next_song(&finished, false),
+            Repeat::Off => None,
+        };
+        if let Some(path) = next {
             self.play(path);
         }
     }
 
-    // 목록 위의 재생 영역: 일시정지/정지, 곡 이름, 음량, 탐색 bar.
-    // 재생 중인 곡이 없어도 같은 모양을 보여주고, 재생 조작만 비활성화
-    fn player_bar(&mut self, ui: &mut egui::Ui) {
-        // slider의 채워진 부분은 진한 강조색, 빈 부분은 바탕과 구별되는 색
-        let colors = theme::palette(ui);
-        ui.visuals_mut().selection.bg_fill = colors.point;
-        // 손잡이에도 쓰이는 색이므로 불투명하게
-        ui.visuals_mut().widgets.inactive.bg_fill = colors.edge.lerp_to_gamma(colors.ink, 0.2);
-
-        let active = self.playing.is_some();
-        let playing_now = self.playing.as_ref().is_some_and(|p| !p.player.is_paused());
-
-        let mut toggle = false;
-        let mut stop = false;
-        ui.horizontal(|ui| {
-            ui.add_enabled_ui(active, |ui| {
-                ui.horizontal(|ui| {
-                    let (icon, hint) = if playing_now {
-                        (Icon::Pause, tr!("일시정지", "Pause"))
-                    } else if active {
-                        (Icon::Play, tr!("계속 재생", "Resume"))
-                    } else {
-                        (Icon::Play, tr!("재생", "Play"))
-                    };
-                    toggle = icons::button(ui, icon, hint).clicked();
-                    stop = icons::button(ui, Icon::Stop, tr!("정지", "Stop")).clicked();
-                });
-            });
-
-            // 음량은 오른쪽 끝에 두고, 곡 이름은 남은 공간에 표시
-            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
-            ui.with_layout(right_to_left, |ui| {
-                ui.spacing_mut().slider_width = 80.0;
+    // 재생 영역의 첫 줄: 음표, 곡 제목과 순서, 음량
+    fn track_info(&mut self, ui: &mut egui::Ui) {
+        let row = egui::vec2(ui.available_width(), 34.0);
+        let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+        ui.allocate_ui_with_layout(row, right_to_left, |ui| {
+            ui.scope(|ui| {
+                ui.spacing_mut().slider_width = 70.0;
                 // 손잡이가 너무 커지지 않도록 slider는 낮게
                 ui.spacing_mut().interact_size.y = 18.0;
                 let percent = self.volume * 100.0;
@@ -395,26 +459,128 @@ impl App {
                 {
                     playing.player.set_volume(self.volume);
                 }
-                icons::picture(ui, Icon::Speaker, tr!("음량", "Volume"));
+            });
+            icons::picture(ui, Icon::Speaker, tr!("음량", "Volume"));
 
-                // 남은 공간에 곡 이름을 흘려 보내고, 곡이 없으면 안내 보여주기
-                let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
-                ui.with_layout(left_to_right, |ui| match &self.playing {
-                    Some(playing) => {
-                        // 재생 위치에 맞춰 움직이므로 일시정지하면 함께 멈춤
-                        marquee(ui, &file_name(&playing.path), playing.player.get_pos());
-                        if !playing.player.is_paused() {
-                            // 부드럽게 흐르도록 자주 다시 그리기
-                            ui.ctx().request_repaint_after(Duration::from_millis(33));
-                        }
-                    }
-                    None => {
+            let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
+            ui.with_layout(left_to_right, |ui| {
+                icons::picture(ui, Icon::Music, tr!("재생 중인 곡", "Now playing"));
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    let Some(playing) = &self.playing else {
                         let hint = tr!("재생할 곡을 선택하세요", "Select a track to play");
+                        ui.add_space(8.0);
                         ui.add(egui::Label::new(egui::RichText::new(hint).weak()).truncate());
+                        return;
+                    };
+                    // 재생 위치에 맞춰 움직이므로 일시정지하면 함께 멈춤
+                    marquee(ui, &file_name(&playing.path), playing.player.get_pos());
+                    if !playing.player.is_paused() {
+                        // 부드럽게 흐르도록 자주 다시 그리기
+                        ui.ctx().request_repaint_after(Duration::from_millis(33));
+                    }
+                    // 소리 파일 중 몇 번째인지
+                    let songs = self.songs();
+                    if let Some(index) = songs.iter().position(|p| p == &playing.path) {
+                        let number = format!("{} / {}", index + 1, songs.len());
+                        ui.label(egui::RichText::new(number).size(11.0).weak());
                     }
                 });
             });
         });
+    }
+
+    // 재생 영역의 가운데 줄: 반복, 이전 곡, 재생/일시정지, 다음 곡, 섞기
+    fn transport(&mut self, ui: &mut egui::Ui) {
+        let size = egui::vec2(ui.available_width(), 52.0);
+        let (row, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        // 가운데에서 offset만큼 떨어진 곳의 정사각형
+        let at = |offset: f32, side: f32| {
+            let center = row.center() + egui::vec2(offset, 0.0);
+            egui::Rect::from_center_size(center, egui::Vec2::splat(side))
+        };
+        let edge = row.width() / 2.0 - 18.0;
+
+        let (repeat_icon, repeat_hint) = match self.repeat {
+            Repeat::Off => (Icon::Repeat, tr!("반복 꺼짐", "Repeat off")),
+            Repeat::All => (Icon::Repeat, tr!("전체 반복", "Repeat all")),
+            Repeat::One => (Icon::RepeatOne, tr!("한 곡 반복", "Repeat one")),
+        };
+        let repeating = self.repeat != Repeat::Off;
+        if icons::flat_button(ui, at(-edge, 32.0), repeat_icon, repeating, repeat_hint).clicked() {
+            self.repeat = match self.repeat {
+                Repeat::Off => Repeat::All,
+                Repeat::All => Repeat::One,
+                Repeat::One => Repeat::Off,
+            };
+        }
+        let shuffle_hint = if self.shuffle {
+            tr!("섞기 켜짐", "Shuffle on")
+        } else {
+            tr!("섞기 꺼짐", "Shuffle off")
+        };
+        if icons::flat_button(
+            ui,
+            at(edge, 32.0),
+            Icon::Shuffle,
+            self.shuffle,
+            shuffle_hint,
+        )
+        .clicked()
+        {
+            self.shuffle = !self.shuffle;
+            self.history.clear();
+        }
+
+        let active = self.playing.is_some();
+        let playing_now = self.playing.as_ref().is_some_and(|p| !p.player.is_paused());
+        let mut toggle = false;
+        let mut previous = false;
+        let mut next = false;
+        ui.add_enabled_ui(active, |ui| {
+            let hint = tr!("이전 곡", "Previous");
+            previous =
+                icons::flat_button(ui, at(-76.0, 40.0), Icon::Previous, true, hint).clicked();
+
+            let (icon, hint) = if playing_now {
+                (Icon::Pause, tr!("일시정지", "Pause"))
+            } else if active {
+                (Icon::Play, tr!("계속 재생", "Resume"))
+            } else {
+                (Icon::Play, tr!("재생", "Play"))
+            };
+            toggle = icons::round_button(ui, at(0.0, 52.0), icon, hint).clicked();
+
+            let hint = tr!("다음 곡", "Next");
+            next = icons::flat_button(ui, at(76.0, 40.0), Icon::Next, true, hint).clicked();
+        });
+
+        if toggle && let Some(playing) = &self.playing {
+            if playing.player.is_paused() {
+                playing.player.play();
+            } else {
+                playing.player.pause();
+            }
+        }
+        if previous {
+            self.previous();
+        }
+        if next {
+            self.skip();
+        }
+    }
+
+    // 목록 위의 재생 영역: 위에서부터 곡 정보, 재생 버튼, 탐색 bar.
+    // 재생 중인 곡이 없어도 같은 모양을 보여주고, 재생 조작만 비활성화
+    fn player_bar(&mut self, ui: &mut egui::Ui) {
+        // slider의 채워진 부분은 진한 강조색, 빈 부분은 바탕과 구별되는 색
+        let colors = theme::palette(ui);
+        ui.visuals_mut().selection.bg_fill = colors.point;
+        // 손잡이에도 쓰이는 색이므로 불투명하게
+        ui.visuals_mut().widgets.inactive.bg_fill = colors.edge.lerp_to_gamma(colors.ink, 0.2);
+
+        self.track_info(ui);
+        self.transport(ui);
 
         // 현재 위치, 전체 길이, 끄는 중인 위치
         let (position, total, seeking) = match &self.playing {
@@ -463,17 +629,6 @@ impl App {
                 }
             });
         });
-
-        if toggle && let Some(playing) = &self.playing {
-            if playing.player.is_paused() {
-                playing.player.play();
-            } else {
-                playing.player.pause();
-            }
-        }
-        if stop {
-            self.playing = None;
-        }
     }
 
     // 함께 설치한 오픈소스 license 문서 열기
@@ -825,6 +980,13 @@ impl eframe::App for App {
         }
         storage.set_string("volume", self.volume.to_string());
         storage.set_string("auto_next", self.auto_next.to_string());
+        let repeat = match self.repeat {
+            Repeat::Off => "off",
+            Repeat::All => "all",
+            Repeat::One => "one",
+        };
+        storage.set_string("repeat", repeat.to_string());
+        storage.set_string("shuffle", self.shuffle.to_string());
         let format = match self.format {
             Format::Mp3 => "mp3",
             Format::Mp4 => "mp4",
@@ -1232,13 +1394,27 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-// 목록에서 current 다음에 있는 곡(동영상은 건너뜀). 마지막 곡이거나 목록에 없으면 None
-fn next_file(files: &[PathBuf], current: &Path) -> Option<PathBuf> {
-    let index = files.iter().position(|path| path == current)?;
-    files[index + 1..]
+// 곡 목록에서 current의 다음(forward) 또는 이전 곡.
+// wrap이면 목록의 끝에서 반대쪽 끝으로 이어짐. current가 목록에 없으면 None
+fn step_song(songs: &[PathBuf], current: &Path, forward: bool, wrap: bool) -> Option<PathBuf> {
+    let index = songs.iter().position(|path| path == current)?;
+    let next = if forward {
+        (index + 1 < songs.len())
+            .then_some(index + 1)
+            .or(wrap.then_some(0))
+    } else {
+        index.checked_sub(1).or(wrap.then_some(songs.len() - 1))
+    };
+    next.map(|i| songs[i].clone())
+}
+
+// 아직 지나오지 않은 곡
+fn unplayed(songs: &[PathBuf], history: &[PathBuf]) -> Vec<PathBuf> {
+    songs
         .iter()
-        .find(|path| !is_video(path))
+        .filter(|path| !history.contains(path))
         .cloned()
+        .collect()
 }
 
 // 옛날 MP3 플레이어처럼 글자를 왼쪽으로 반복해서 흘려 보내기.
@@ -1287,18 +1463,24 @@ mod tests {
     }
 
     #[test]
-    fn finds_next_file() {
-        let files = [PathBuf::from("a.mp3"), PathBuf::from("b.mp3")];
-        assert_eq!(next_file(&files, &files[0]), Some(files[1].clone()));
-        assert_eq!(next_file(&files, &files[1]), None);
-        assert_eq!(next_file(&files, Path::new("c.mp3")), None);
+    fn steps_through_songs() {
+        let songs = ["a.mp3", "b.mp3", "c.mp3"].map(PathBuf::from);
+        let step = |from: usize, forward, wrap| step_song(&songs, &songs[from], forward, wrap);
+        assert_eq!(step(0, true, false), Some(songs[1].clone()));
+        assert_eq!(step(2, true, false), None);
+        assert_eq!(step(2, true, true), Some(songs[0].clone()));
+        assert_eq!(step(1, false, false), Some(songs[0].clone()));
+        assert_eq!(step(0, false, false), None);
+        assert_eq!(step(0, false, true), Some(songs[2].clone()));
+        assert_eq!(step_song(&songs, Path::new("x.mp3"), true, true), None);
+        assert_eq!(step_song(&[], Path::new("x.mp3"), false, true), None);
     }
 
     #[test]
-    fn skips_videos_when_finding_next_file() {
-        let files = ["a.mp3", "b.MP4", "c.mp3", "d.mp4"].map(PathBuf::from);
-        assert_eq!(next_file(&files, &files[0]), Some(files[2].clone()));
-        assert_eq!(next_file(&files, &files[2]), None);
+    fn picks_only_unplayed_songs() {
+        let songs = ["a.mp3", "b.mp3", "c.mp3"].map(PathBuf::from);
+        assert_eq!(unplayed(&songs, &songs[..2]), vec![songs[2].clone()]);
+        assert!(unplayed(&songs, &songs).is_empty());
     }
 
     #[test]

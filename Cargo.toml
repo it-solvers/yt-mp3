@@ -1,10 +1,11 @@
 [package]
 name = "yt-mp3"
-version = "1.0.30"
+version = "1.0.31"
 edition = "2024"
 
 [dependencies]
 eframe = { version = "0.37.0", features = ["persistence"] }
+fastrand = "2.5.0"
 open = "5.4.5"
 rfd = "0.18.0"
 rodio = "0.23.0"
