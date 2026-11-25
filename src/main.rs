@@ -6,9 +6,10 @@
 mod lang;
 
 mod icons;
+mod theme;
 
 use eframe::egui;
-use icons::{ACCENT, Icon};
+use icons::Icon;
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -40,7 +41,7 @@ fn main() -> eframe::Result {
         &app_name(),
         options,
         Box::new(|cc| {
-            apply_theme(&cc.egui_ctx);
+            theme::apply(&cc.egui_ctx);
             let app = App::new(cc.storage);
             // 저장해 둔 언어에 맞게 창 제목 다시 설정
             cc.egui_ctx
@@ -48,33 +49,6 @@ fn main() -> eframe::Result {
             Ok(Box::new(app))
         }),
     )
-}
-
-// 어두운 화면과 밝은 화면 모두에 청록색 강조색 적용
-fn apply_theme(ctx: &egui::Context) {
-    ctx.all_styles_mut(|style| {
-        // 줄의 기본 높이를 아이콘 버튼에 맞춰서 글자와 버튼의 세로 위치를 가지런히 하기
-        style.spacing.interact_size.y = 28.0;
-
-        // bg는 선택 영역, 진행률, slider의 채움색. fg는 그 위의 글자와 입력창 테두리
-        let (bg, fg) = if style.visuals.dark_mode {
-            (ACCENT, egui::Color32::from_rgb(190, 250, 240))
-        } else {
-            (
-                egui::Color32::from_rgb(175, 230, 222),
-                egui::Color32::from_rgb(0, 92, 84),
-            )
-        };
-        let link = if style.visuals.dark_mode {
-            egui::Color32::from_rgb(64, 200, 184)
-        } else {
-            ACCENT
-        };
-        style.visuals.selection.bg_fill = bg;
-        style.visuals.selection.stroke = egui::Stroke::new(1.0, fg);
-        style.visuals.hyperlink_color = link;
-        style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, link);
-    });
 }
 
 fn app_name() -> String {
@@ -323,6 +297,9 @@ impl App {
             return;
         };
 
+        // slider의 채워진 부분은 진한 강조색
+        ui.visuals_mut().selection.bg_fill = theme::palette(ui).point;
+
         let mut stop = false;
         ui.horizontal(|ui| {
             if playing.player.is_paused() {
@@ -483,31 +460,29 @@ impl App {
 
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.radio_value(
-                &mut self.format,
-                Format::Mp3,
-                tr!("MP3 (소리)", "MP3 (audio)"),
-            );
-            ui.radio_value(
-                &mut self.format,
-                Format::Mp4,
-                tr!("MP4 (동영상)", "MP4 (video)"),
-            );
+            ui.scope(|ui| {
+                accent_marks(ui);
+                ui.radio_value(
+                    &mut self.format,
+                    Format::Mp3,
+                    tr!("MP3 (소리)", "MP3 (audio)"),
+                );
+                ui.radio_value(
+                    &mut self.format,
+                    Format::Mp4,
+                    tr!("MP4 (동영상)", "MP4 (video)"),
+                );
+            });
 
             // 지원 사이트 안내: 누르면 열리고, 바깥을 누르면 닫힘
             let sites = tr!("지원 사이트", "Supported sites");
             let link = ui.link(egui::RichText::new(sites).size(11.0));
 
-            // 뒤의 화면과 구별되도록 강조색 테두리와 다른 배경색 사용
-            let visuals = ui.visuals();
-            let background = if visuals.dark_mode {
-                egui::Color32::from_rgb(38, 52, 52)
-            } else {
-                egui::Color32::WHITE
-            };
+            // 뒤의 화면과 구별되도록 강조색 테두리와 조금 밝은 바탕 사용
+            let colors = theme::palette(ui);
             let frame = egui::Frame::popup(ui.style())
-                .fill(background)
-                .stroke(egui::Stroke::new(2.0, visuals.hyperlink_color))
+                .fill(colors.shade(0.08))
+                .stroke(egui::Stroke::new(2.0, colors.point))
                 .inner_margin(14);
             egui::Popup::from_toggle_button_response(&link)
                 .frame(frame)
@@ -578,10 +553,13 @@ impl App {
                 if icons::button(ui, Icon::Refresh, tr!("새로고침", "Refresh")).clicked() {
                     self.refresh_files();
                 }
-                ui.checkbox(
-                    &mut self.auto_next,
-                    tr!("다음 곡 자동 재생", "Play next automatically"),
-                );
+                ui.scope(|ui| {
+                    accent_marks(ui);
+                    ui.checkbox(
+                        &mut self.auto_next,
+                        tr!("다음 곡 자동 재생", "Play next automatically"),
+                    );
+                });
             });
         });
 
@@ -838,7 +816,13 @@ impl eframe::App for App {
                     ui.label(&self.status);
                 });
                 if let Some(progress) = self.job.as_ref().and_then(|job| job.progress) {
-                    ui.add(egui::ProgressBar::new(progress).show_percentage());
+                    ui.scope(|ui| {
+                        // 진행률 글자가 채워진 부분 위에서도 보이게 글자색 사용
+                        let colors = theme::palette(ui);
+                        ui.visuals_mut().selection.bg_fill = colors.tint(0.55);
+                        ui.visuals_mut().selection.stroke.color = colors.ink;
+                        ui.add(egui::ProgressBar::new(progress).show_percentage());
+                    });
                 }
             }
 
@@ -1019,22 +1003,27 @@ fn tool_path() -> OsString {
     std::env::join_paths(folders).unwrap_or(current)
 }
 
+// radio와 checkbox의 선택 표시는 강조색, 글자는 원래 색
+fn accent_marks(ui: &mut egui::Ui) {
+    let colors = theme::palette(ui);
+    let visuals = ui.visuals_mut();
+    visuals.override_text_color = Some(colors.ink);
+    for widget in [
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+    ] {
+        widget.fg_stroke.color = colors.point;
+    }
+}
+
 // 목록의 파일 한 줄을 감싸는 카드. 재생 중이면 강조색으로 구별
 fn file_card(ui: &egui::Ui, current: bool) -> egui::Frame {
-    let visuals = ui.visuals();
-    let (card, line) = if visuals.dark_mode {
-        (
-            egui::Color32::from_rgb(38, 42, 43),
-            egui::Color32::from_gray(60),
-        )
-    } else {
-        (egui::Color32::WHITE, egui::Color32::from_gray(221))
-    };
+    let colors = theme::palette(ui);
     let (fill, line) = if current {
-        let accent = visuals.hyperlink_color;
-        (card.lerp_to_gamma(accent, 0.14), accent)
+        (colors.tint(0.12), colors.point)
     } else {
-        (card, line)
+        (colors.shade(0.05), colors.shade(0.11))
     };
 
     egui::Frame::new()

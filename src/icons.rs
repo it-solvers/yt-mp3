@@ -1,11 +1,11 @@
 // 직접 그리는 아이콘.
-// 버튼은 강조색(청록)과 회색만 사용. 삭제는 마우스를 올렸을 때만 빨간색.
-// 파일 종류 표시는 소리(청록)와 동영상(주황)을 색으로 구별.
+// 색은 theme.rs의 3색만 사용. 저장과 일시정지만 강조색, 파일 종류는 모양으로 구별.
 // 이미지 파일 없이 도형으로 그려서 어떤 크기에서도 선명함
 
+use crate::theme::palette;
 use eframe::egui::{
     Color32, CornerRadius, CursorIcon, Painter, Pos2, Rect, Response, Role, Sense, Shape, Stroke,
-    Ui, Vec2, WidgetInfo, pos2, vec2,
+    StrokeKind, Ui, Vec2, WidgetInfo, pos2, vec2,
 };
 
 #[derive(Clone, Copy)]
@@ -24,30 +24,22 @@ pub enum Icon {
     Video,
 }
 
-// 강조색(청록색). 저장, 재생, 일시정지에 사용
-pub const ACCENT: Color32 = Color32::from_rgb(22, 128, 118);
-// 삭제 버튼에 마우스를 올렸을 때의 색
-const DANGER: Color32 = Color32::from_rgb(200, 70, 66);
-
 // 아이콘 하나가 들어가는 버튼. label은 마우스를 올렸을 때 보여줄 설명
 pub fn button(ui: &mut Ui, icon: Icon, label: String) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
     describe(&response, ui, &label);
 
     if ui.is_rect_visible(rect) {
-        let (mut fill, mut glyph) = match icon {
-            // 주요 동작은 강조색
-            Icon::Play | Icon::Pause => (ACCENT, Color32::WHITE),
-            _ => neutral(ui),
+        let colors = palette(ui);
+        let (mut fill, glyph) = match icon {
+            // 재생 중임을 알리는 일시정지만 강조색
+            Icon::Pause => (colors.point, colors.on_point),
+            _ => (colors.shade(0.12), colors.ink),
         };
-        if response.hovered() {
-            (fill, glyph) = match icon {
-                Icon::Trash => (DANGER, Color32::WHITE),
-                _ => (brighten(fill), glyph),
-            };
-        }
         if response.is_pointer_button_down_on() {
-            fill = fill.gamma_multiply(0.8).to_opaque();
+            fill = fill.lerp_to_gamma(colors.base, 0.2);
+        } else if response.hovered() {
+            fill = fill.lerp_to_gamma(colors.ink, 0.12);
         }
         ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
         paint(ui.painter(), rect.shrink(7.0), icon, glyph, fill);
@@ -63,7 +55,7 @@ pub fn clear_button(ui: &mut Ui, rect: Rect, label: String) -> Response {
 
     // 평소에는 흐리게, 마우스를 올리면 둥근 배경과 함께 진하게
     let color = if response.hovered() {
-        let (background, _) = neutral(ui);
+        let background = palette(ui).shade(0.12);
         ui.painter()
             .circle_filled(rect.center(), rect.width() / 2.0, background);
         ui.visuals().strong_text_color()
@@ -86,57 +78,55 @@ pub fn clear_button(ui: &mut Ui, rect: Rect, label: String) -> Response {
 pub fn picture(ui: &mut Ui, icon: Icon, label: String) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
     if ui.is_rect_visible(rect) {
-        let weak = ui.visuals().weak_text_color();
+        let colors = palette(ui);
+        let radius = CornerRadius::same(8);
         match icon {
-            // 파일 종류는 종류별 색의 옅은 배경으로 표시
-            Icon::Music | Icon::Video => {
-                let accent = match icon {
-                    Icon::Video => video_color(ui),
-                    _ => ui.visuals().hyperlink_color,
-                };
-                let tint = ui.visuals().panel_fill.lerp_to_gamma(accent, 0.18);
-                ui.painter().rect_filled(rect, CornerRadius::same(8), tint);
-                paint(ui.painter(), rect.shrink(7.0), icon, accent, tint);
+            // 소리 파일: 테두리만 있는 칸에 음표
+            Icon::Music => {
+                let line = Stroke::new(1.5, colors.shade(0.35));
+                ui.painter()
+                    .rect_stroke(rect, radius, line, StrokeKind::Inside);
+                paint(
+                    ui.painter(),
+                    rect.shrink(7.0),
+                    icon,
+                    colors.ink,
+                    colors.base,
+                );
+            }
+            // 동영상 파일: 밝게 채운 칸에 재생 삼각형
+            Icon::Video => {
+                let fill = colors.shade(0.85);
+                ui.painter().rect_filled(rect, radius, fill);
+                paint(
+                    ui.painter(),
+                    rect.shrink(8.0),
+                    Icon::Play,
+                    colors.base,
+                    fill,
+                );
             }
             // 나머지는 배경 없이 그려서 버튼과 구별
-            _ => {
-                let background = ui.visuals().panel_fill;
-                paint(ui.painter(), rect.shrink(6.0), icon, weak, background);
-            }
+            _ => paint(
+                ui.painter(),
+                rect.shrink(6.0),
+                icon,
+                colors.shade(0.55),
+                colors.base,
+            ),
         }
     }
     response.on_hover_text(label)
 }
 
-// 동영상 표시색(주황). 밝은 화면에서는 잘 보이도록 진하게
-fn video_color(ui: &Ui) -> Color32 {
-    if ui.visuals().dark_mode {
-        Color32::from_rgb(244, 164, 72)
-    } else {
-        Color32::from_rgb(196, 105, 10)
-    }
-}
-
-// 보조 버튼의 배경색과 그림색
-fn neutral(ui: &Ui) -> (Color32, Color32) {
-    if ui.visuals().dark_mode {
-        (Color32::from_gray(54), Color32::from_gray(215))
-    } else {
-        (Color32::from_gray(228), Color32::from_gray(70))
-    }
-}
-
-fn brighten(color: Color32) -> Color32 {
-    color.lerp_to_gamma(Color32::WHITE, 0.15)
-}
-
 // 아이콘과 글자가 함께 있는 강조 버튼
 pub fn primary_button(ui: &mut Ui, icon: Icon, label: String, enabled: bool) -> Response {
     let enabled = enabled && ui.is_enabled();
+    let colors = palette(ui);
     let font = eframe::egui::TextStyle::Button.resolve(ui.style());
     let text = ui
         .painter()
-        .layout_no_wrap(label.clone(), font, Color32::WHITE);
+        .layout_no_wrap(label.clone(), font, colors.on_point);
 
     // 여백 12 + 아이콘 16 + 간격 6 + 글자 + 여백 14
     let size = vec2((text.size().x + 48.0).max(92.0), 32.0);
@@ -154,18 +144,18 @@ pub fn primary_button(ui: &mut Ui, icon: Icon, label: String, enabled: bool) -> 
         painter.multiply_opacity(0.4);
     }
     let fill = if response.hovered() && enabled {
-        brighten(ACCENT)
+        colors.point.lerp_to_gamma(colors.ink, 0.15)
     } else {
-        ACCENT
+        colors.point
     };
     painter.rect_filled(rect, CornerRadius::same(10), fill);
 
     let content = 16.0 + 6.0 + text.size().x;
     let left = rect.center().x - content / 2.0;
     let icon_rect = Rect::from_center_size(pos2(left + 8.0, rect.center().y), Vec2::splat(16.0));
-    paint(&painter, icon_rect, icon, Color32::WHITE, fill);
+    paint(&painter, icon_rect, icon, colors.on_point, fill);
     let text_pos = pos2(left + 22.0, rect.center().y - text.size().y / 2.0);
-    painter.galley(text_pos, text, Color32::WHITE);
+    painter.galley(text_pos, text, colors.on_point);
 
     response
 }
