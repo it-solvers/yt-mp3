@@ -101,6 +101,50 @@ fn supported_sites(ui: &mut egui::Ui, notes: bool) {
     }
 }
 
+// 잠시 보였다가 사라지는 알림
+struct Toast {
+    title: Option<String>,
+    text: String,
+    // 저장 위치처럼 작게 덧붙이는 글
+    place: Option<String>,
+    // 세기 시작한 시각. 아직 그리지 않았으면 None
+    since: Option<f64>,
+}
+
+impl Toast {
+    // 흐려지며 사라지는 데 걸리는 시간(초)
+    const FADE: f32 = 0.5;
+
+    fn new(text: String) -> Self {
+        Self {
+            title: None,
+            text,
+            place: None,
+            since: None,
+        }
+    }
+
+    // 저장 완료: 받은 파일의 이름과 위치
+    fn saved(files: &[PathBuf], folder: &Path) -> Self {
+        let names: Vec<String> = files.iter().map(|path| file_name(path)).collect();
+        // 파일 이름을 알 수 없으면 다운로드 폴더
+        let place = files
+            .first()
+            .map_or_else(|| folder.display().to_string(), |path| location(path));
+        Self {
+            title: Some(tr!("저장 완료!", "Saved!")),
+            text: names.join("\n"),
+            place: Some(tr!("위치: {place}", "Location: {place}")),
+            since: None,
+        }
+    }
+
+    // 흐려지기 전까지 보여주는 시간(초). 글이 길수록 오래 (2~5초)
+    fn seconds(&self) -> f32 {
+        (self.text.chars().count() as f32 / 14.0).clamp(2.0, 5.0)
+    }
+}
+
 // 다운로드에 실패했을 때 팝업에 보여줄 내용
 struct Failure {
     reason: String,
@@ -116,12 +160,10 @@ struct App {
     url: String,
     folder: PathBuf,
     status: String,
-    // 결과나 오류를 알리는 팝업이 열려 있으면 Some(알릴 말)
-    alert: Option<String>,
+    // 결과나 오류를 알리는 알림이 떠 있으면 Some
+    toast: Option<Toast>,
     // 다운로드 실패 팝업이 열려 있으면 Some
     failure: Option<Failure>,
-    // 저장 완료 팝업이 열려 있으면 Some(받은 파일들)
-    saved: Option<Vec<PathBuf>>,
     // 고른 화면 색
     colors: theme::Choice,
     // 색상 선택 팝업이 열려 있는지
@@ -252,9 +294,8 @@ impl App {
             folder,
             // 보여줄 안내가 생기기 전까지는 비워 두기
             status: String::new(),
-            alert: None,
+            toast: None,
             failure: None,
-            saved: None,
             colors: theme::Choice {
                 preset: saved("color_preset")
                     .and_then(|v| v.parse().ok())
@@ -379,53 +420,58 @@ impl App {
         });
     }
 
-    // 결과와 오류를 알려주기만 하는 팝업
-    fn alert_dialog(&mut self, ui: &mut egui::Ui) {
-        let Some(message) = &self.alert else {
+    // 창 아래쪽 가운데의 알림. 잠시 보인 뒤 흐려지며 사라짐.
+    // 마우스를 올리면 기다리고, 누르면 바로 닫힘. 뒤의 화면은 계속 사용할 수 있음
+    fn show_toast(&mut self, ui: &egui::Ui) {
+        let Some(toast) = &mut self.toast else {
             return;
         };
-        let title = tr!("알림", "Notice");
-        let closed = dialog(
-            ui,
-            "alert",
-            &title,
-            |ui| message_box(ui, |ui| plain_line(ui, message)),
-            |_| {},
-        );
-        if closed {
-            self.alert = None;
+        let ctx = ui.ctx();
+        let now = ctx.input(|i| i.time);
+        let elapsed = (now - *toast.since.get_or_insert(now)) as f32;
+        let remaining = toast.seconds() - elapsed;
+        // 시간이 지나면 FADE 동안 1에서 0으로
+        let opacity = (1.0 + remaining / Toast::FADE).min(1.0);
+        if opacity <= 0.0 {
+            self.toast = None;
+            return;
         }
-    }
 
-    // 저장 완료 팝업: 받은 파일의 이름과 위치
-    fn saved_dialog(&mut self, ui: &mut egui::Ui) {
-        let Some(files) = &self.saved else {
-            return;
-        };
-        let folder = &self.folder;
-        let title = tr!("저장 완료!", "Saved!");
-        let closed = dialog(
-            ui,
-            "saved",
-            &title,
-            |ui| {
-                message_box(ui, |ui| {
-                    for path in files {
-                        plain_line(ui, &file_name(path));
+        let width = (ctx.content_rect().width() - 64.0).min(332.0);
+        let area = egui::Area::new(egui::Id::unique("toast"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -16.0))
+            .show(ctx, |ui| {
+                ui.multiply_opacity(opacity);
+                // 글자를 선택하는 기능이 클릭을 가로채지 않게 끄기
+                ui.style_mut().interaction.selectable_labels = false;
+                popup_frame(ui).show(ui, |ui| {
+                    ui.set_width(width);
+                    let strong = ui.visuals().strong_text_color();
+                    if let Some(title) = &toast.title {
+                        let title = egui::RichText::new(title).strong().color(strong);
+                        ui.label(title);
                     }
-                    // 받은 파일의 위치. 파일 이름을 알 수 없으면 다운로드 폴더
-                    let place = files
-                        .first()
-                        .map_or_else(|| folder.display().to_string(), |path| location(path));
-                    let place = tr!("위치: {place}", "Location: {place}");
-                    let place = egui::RichText::new(place).size(11.0).weak();
-                    ui.add(egui::Label::new(place).wrap());
+                    let text = egui::RichText::new(&toast.text).color(strong);
+                    ui.add(egui::Label::new(text).wrap());
+                    if let Some(place) = &toast.place {
+                        let place = egui::RichText::new(place).size(11.0).weak();
+                        ui.add(egui::Label::new(place).wrap());
+                    }
                 });
-            },
-            |_| {},
-        );
-        if closed {
-            self.saved = None;
+            });
+
+        let response = area.response.interact(egui::Sense::click());
+        if response.clicked() {
+            self.toast = None;
+        } else if response.contains_pointer() {
+            // 마우스를 올려 둔 동안은 처음부터 다시 세기
+            toast.since = Some(now);
+        } else if remaining > 0.0 {
+            ctx.request_repaint_after(Duration::from_secs_f32(remaining));
+        } else {
+            // 흐려지는 동안은 계속 그리기
+            ctx.request_repaint();
         }
     }
 
@@ -561,7 +607,7 @@ impl App {
         if self.job.is_none() {
             self.status.clear();
         }
-        self.alert = None;
+        self.toast = None;
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(app_name()));
     }
 
@@ -587,7 +633,7 @@ impl App {
         let found = collect_media(dropped);
         let total = found.len();
         let added = self.add_files(found);
-        self.alert = Some(if added > 0 {
+        self.toast = Some(Toast::new(if added > 0 {
             tr!(
                 "{added}개를 재생목록에 추가했어요",
                 "Added {added} file(s) to the playlist",
@@ -599,7 +645,7 @@ impl App {
                 "추가할 음악, 영상 파일이 없어요",
                 "No music or video files to add",
             )
-        });
+        }));
     }
 
     // 파일을 재생목록에서만 빼기. 원본 파일은 그대로 둠
@@ -627,7 +673,9 @@ impl App {
                 playing.player.set_volume(self.volume);
                 self.playing = Some(playing);
             }
-            Err(message) => self.alert = Some(tr!("오류: {message}", "Error: {message}")),
+            Err(message) => {
+                self.toast = Some(Toast::new(tr!("오류: {message}", "Error: {message}")))
+            }
         }
     }
 
@@ -638,10 +686,10 @@ impl App {
             playing.player.pause();
         }
         if let Err(e) = open::that_detached(path) {
-            self.alert = Some(tr!(
+            self.toast = Some(Toast::new(tr!(
                 "오류: 동영상을 열 수 없어요: {e}",
                 "Error: cannot open the video: {e}"
-            ));
+            )));
         }
     }
 
@@ -976,10 +1024,10 @@ impl App {
                     // 마우스를 놓았을 때 한 번만 이동하기
                     playing.seeking = None;
                     if let Err(e) = playing.player.try_seek(Duration::from_secs_f32(bar)) {
-                        self.alert = Some(tr!(
+                        self.toast = Some(Toast::new(tr!(
                             "오류: 이동할 수 없어요: {e}",
                             "Error: cannot seek: {e}"
-                        ));
+                        )));
                     }
                 }
             });
@@ -1002,18 +1050,18 @@ impl App {
         let path = match found {
             Ok(path) => path,
             Err(e) => {
-                self.alert = Some(tr!(
+                self.toast = Some(Toast::new(tr!(
                     "오류: 라이선스 문서를 열 수 없어요: {e}",
                     "Error: cannot open the license document: {e}",
-                ));
+                )));
                 return;
             }
         };
         if let Err(e) = open::that_detached(path) {
-            self.alert = Some(tr!(
+            self.toast = Some(Toast::new(tr!(
                 "오류: 라이선스 문서를 열 수 없어요: {e}",
                 "Error: cannot open the license document: {e}",
-            ));
+            )));
         }
     }
 
@@ -1139,7 +1187,7 @@ impl App {
                 "Moved {count} files to trash",
             )
         };
-        self.alert = Some(message);
+        self.toast = Some(Toast::new(message));
         self.remove_from_list(&removed);
     }
 
@@ -1234,10 +1282,10 @@ impl App {
         if let Some(paths) = remove {
             let count = paths.len();
             self.remove_from_list(&paths);
-            self.alert = Some(tr!(
+            self.toast = Some(Toast::new(tr!(
                 "{count}개를 목록에서 뺐어요",
                 "Removed {count} file(s) from the playlist",
-            ));
+            )));
         }
     }
 
@@ -1499,10 +1547,10 @@ impl App {
                         ),
                     };
                 }
-                // 완료와 실패는 상태 줄 대신 팝업으로 알려주기
+                // 완료는 알림, 실패는 팝업으로 알려주기
                 Ok(Update::Done(Ok(paths))) => {
                     downloaded = paths.clone();
-                    self.saved = Some(paths);
+                    self.toast = Some(Toast::saved(&paths, &self.folder));
                     break String::new();
                 }
                 Ok(Update::Done(Err(reason))) => {
@@ -1594,9 +1642,8 @@ impl eframe::App for App {
         self.about_dialog(ui);
         self.color_dialog(ui);
         self.failure_dialog(ui);
-        self.saved_dialog(ui);
         // 다른 팝업에서 생긴 오류도 보이도록 마지막에
-        self.alert_dialog(ui);
+        self.show_toast(ui);
         // 파일을 창 위로 끌어 오면 안내 보여주기
         if ui.input(|i| !i.raw.hovered_files.is_empty()) {
             drop_overlay(ui);
@@ -1881,25 +1928,6 @@ fn dialog(
         && !response.any_popup_open
         && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     closed || escaped
-}
-
-// 알림 팝업에서 내용을 담는 상자
-fn message_box(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::new()
-        .fill(theme::palette(ui).shade(0.14))
-        .corner_radius(8)
-        .inner_margin(10)
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            content(ui);
-        });
-}
-
-// 길면 줄을 바꿔서 보여주는 글
-fn plain_line(ui: &mut egui::Ui, text: &str) {
-    let strong = ui.visuals().strong_text_color();
-    let text = egui::RichText::new(text).color(strong);
-    ui.add(egui::Label::new(text).wrap());
 }
 
 // 색 조합 하나를 고르는 버튼. 세 색의 견본과 이름을 보여줌
@@ -2623,6 +2651,14 @@ mod tests {
         for name in ["a.kar", "b.txt", "c.aiff", "mp3", "d.mp3.part"] {
             assert!(!is_media(Path::new(name)), "{name}");
         }
+    }
+
+    #[test]
+    fn shows_longer_messages_longer() {
+        let seconds = |length: usize| Toast::new("가".repeat(length)).seconds();
+        assert_eq!(seconds(5), 2.0);
+        assert_eq!(seconds(42), 3.0);
+        assert_eq!(seconds(500), 5.0);
     }
 
     #[test]
