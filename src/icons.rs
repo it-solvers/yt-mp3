@@ -19,7 +19,6 @@ pub enum Icon {
     Repeat,
     RepeatOne,
     Shuffle,
-    Trash,
     Folder,
     Download,
     Speaker,
@@ -319,14 +318,6 @@ fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                     color,
                 );
             }
-        }
-        Icon::Trash => {
-            block(0.34, 0.00, 0.66, 0.18, 1);
-            block(0.04, 0.12, 0.96, 0.27, 1);
-            fill(
-                vec![at(0.14, 0.35), at(0.86, 0.35), at(0.78, 1.0), at(0.22, 1.0)],
-                color,
-            );
         }
         Icon::Folder => {
             block(0.00, 0.08, 0.46, 0.40, 2);

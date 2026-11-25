@@ -123,8 +123,10 @@ struct App {
     choosing_colors: bool,
     // 다운로드 중이면 Some, 아니면 None
     job: Option<Job>,
-    // 저장 폴더에 있는 mp3, mp4 목록
+    // 재생목록. 파일은 원래 위치에 두고 경로만 기억
     files: Vec<PathBuf>,
+    // 재생목록 중에서 지금은 찾을 수 없는 파일
+    missing: HashSet<PathBuf>,
     // 재생 중이면 Some, 아니면 None
     playing: Option<Playing>,
     // 편집 중이면 Some(고른 파일), 아니면 None
@@ -133,8 +135,6 @@ struct App {
     focused: bool,
     // 편집 중에 끌고 있는 파일
     dragging: Option<PathBuf>,
-    // 사용자가 정한 순서. 폴더별 파일 이름 목록
-    orders: HashMap<String, Vec<String>>,
     // 음량 (0.0 ~ 1.0)
     volume: f32,
     // 음소거를 풀 때 돌아갈 음량
@@ -186,7 +186,8 @@ enum Update {
     Progress(f32),
     // 다 받은 뒤 ffmpeg로 처리하는 중
     Processing,
-    Done(Result<(), String>),
+    // 성공하면 받은 파일들의 경로
+    Done(Result<Vec<PathBuf>, String>),
 }
 
 // 재생에 필요한 값들
@@ -257,11 +258,11 @@ impl App {
             choosing_colors: false,
             job: None,
             files: Vec::new(),
+            missing: HashSet::new(),
             playing: None,
             selected: None,
             focused: true,
             dragging: None,
-            orders: saved("order").map(|v| parse_orders(&v)).unwrap_or_default(),
             volume,
             unmuted,
             repeat,
@@ -273,7 +274,19 @@ impl App {
             language_chosen,
             icon_texture: None,
         };
-        app.refresh_files();
+        app.files = match saved("playlist") {
+            Some(text) => parse_playlist(&text),
+            // 재생목록이 처음이면 지금 폴더의 파일을 이전에 정한 순서대로 가져오기
+            None => {
+                let files = list_media(&app.folder).unwrap_or_default();
+                let orders = saved("order").map(|v| parse_orders(&v)).unwrap_or_default();
+                match orders.get(&app.folder.display().to_string()) {
+                    Some(order) => apply_order(files, order),
+                    None => files,
+                }
+            }
+        };
+        app.check_missing();
         app
     }
 
@@ -505,27 +518,57 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(app_name()));
     }
 
-    // 저장 폴더의 파일 목록 다시 읽기
-    fn refresh_files(&mut self) {
-        match list_media(&self.folder) {
-            Ok(files) => {
-                let order = self.orders.get(&self.folder.display().to_string());
-                self.files = match order {
-                    Some(order) => apply_order(files, order),
-                    None => files,
-                };
-            }
-            Err(e) => {
-                self.files.clear();
-                self.status = tr!(
-                    "오류: 폴더를 읽을 수 없어요: {e}",
-                    "Error: cannot read the folder: {e}"
-                );
-            }
+    // 재생목록에서 지금은 찾을 수 없는 파일 확인하기
+    fn check_missing(&mut self) {
+        self.missing = self
+            .files
+            .iter()
+            .filter(|path| !path.is_file())
+            .cloned()
+            .collect();
+    }
+
+    // 재생목록 맨 위에 파일 추가하기. 새로 추가한 개수를 돌려줌
+    fn add_files(&mut self, paths: Vec<PathBuf>) -> usize {
+        let added = add_to_front(&mut self.files, paths);
+        self.check_missing();
+        added
+    }
+
+    // 창에 끌어다 놓은 파일과 폴더를 재생목록에 추가하기
+    fn add_dropped(&mut self, dropped: &[PathBuf]) {
+        let found = collect_media(dropped);
+        let total = found.len();
+        let added = self.add_files(found);
+        self.notice = if added > 0 {
+            tr!(
+                "{added}개를 재생목록에 추가했어요",
+                "Added {added} file(s) to the playlist",
+            )
+        } else if total > 0 {
+            tr!("이미 재생목록에 있어요", "Already in the playlist")
+        } else {
+            tr!(
+                "추가할 mp3, mp4 파일이 없어요",
+                "No mp3 or mp4 files to add",
+            )
+        };
+    }
+
+    // 파일을 재생목록에서만 빼기. 원본 파일은 그대로 둠
+    fn remove_from_list(&mut self, paths: &[PathBuf]) {
+        if self
+            .playing
+            .as_ref()
+            .is_some_and(|p| paths.contains(&p.path))
+        {
+            self.playing = None;
         }
-        // 목록에서 없어진 파일은 선택에서도 빼기
+        self.files.retain(|path| !paths.contains(path));
+        self.check_missing();
+        // 편집 중이면 편집은 계속하고 선택만 비우기
         if let Some(selected) = &mut self.selected {
-            selected.retain(|path| self.files.contains(path));
+            selected.clear();
         }
     }
 
@@ -588,11 +631,11 @@ impl App {
         self.play(path);
     }
 
-    // 목록의 소리 파일 (동영상 제외)
+    // 재생할 수 있는 소리 파일 (동영상과 찾을 수 없는 파일 제외)
     fn songs(&self) -> Vec<PathBuf> {
         self.files
             .iter()
-            .filter(|path| !is_video(path))
+            .filter(|path| !is_video(path) && !self.missing.contains(*path))
             .cloned()
             .collect()
     }
@@ -985,17 +1028,18 @@ impl App {
         ui.add_space(4.0);
         // 저장 폴더는 경로가 다 보이도록 한 줄을 따로 사용
         ui.horizontal(|ui| {
-            let change = tr!("저장 폴더 변경", "Change folder");
+            let change = tr!("다운로드 폴더 변경", "Change download folder");
             if icons::button(ui, Icon::Folder, change).clicked() {
                 // 취소하면 None이므로 기존 폴더를 그대로 유지
                 if let Some(folder) = rfd::FileDialog::new()
                     .set_directory(&self.folder)
                     .pick_folder()
                 {
+                    // 받는 위치만 바꾸고 재생목록은 그대로
                     self.folder = folder;
-                    self.refresh_files();
                 }
             }
+            ui.label(tr!("다운로드 폴더", "Download folder"));
             // 경로가 한 줄보다 길면 줄을 바꿔서 전부 보여주기
             let path = self.folder.display().to_string();
             ui.add(egui::Label::new(egui::RichText::new(path).weak()).wrap());
@@ -1006,12 +1050,13 @@ impl App {
         }
     }
 
-    // 확인을 받은 뒤 파일들을 휴지통으로 옮기기
+    // 확인을 받은 뒤 파일들을 휴지통으로 옮기고 재생목록에서 빼기
     fn delete(&mut self, paths: Vec<PathBuf>) {
         if paths.is_empty() || !confirm_delete(&paths) {
             return;
         }
 
+        let mut removed = Vec::new();
         let mut moved = Vec::new();
         let mut errors = Vec::new();
         for path in paths {
@@ -1019,8 +1064,16 @@ impl App {
             if self.playing.as_ref().is_some_and(|p| p.path == path) {
                 self.playing = None;
             }
+            // 이미 없는 파일은 목록에서만 빼기
+            if !path.exists() {
+                removed.push(path);
+                continue;
+            }
             match move_to_trash(&path) {
-                Ok(()) => moved.push(file_name(&path)),
+                Ok(()) => {
+                    moved.push(file_name(&path));
+                    removed.push(path);
+                }
                 Err(e) => errors.push(e.to_string()),
             }
         }
@@ -1040,33 +1093,26 @@ impl App {
                 "Moved {count} files to trash",
             )
         };
-        // 편집 중이면 편집은 계속하고 선택만 비우기
-        if let Some(selected) = &mut self.selected {
-            selected.clear();
-        }
-        self.refresh_files();
+        self.remove_from_list(&removed);
     }
 
-    // 목록의 from 번째 파일을 to 번째 줄 앞으로 옮기고 순서 기억하기
+    // 목록의 from 번째 파일을 to 번째 줄 앞으로 옮기기
     fn move_file(&mut self, from: usize, to: usize) {
-        if !move_item(&mut self.files, from, to) {
-            return;
-        }
-        let names = self.files.iter().map(|path| file_name(path)).collect();
-        self.orders.insert(self.folder.display().to_string(), names);
+        move_item(&mut self.files, from, to);
     }
 
-    // 목록의 제목 줄. 편집 중일 때는 전체 선택, 삭제, 완료 버튼을 보여줌
+    // 목록의 제목 줄. 편집 중일 때는 전체 선택, 빼기, 삭제, 완료 버튼을 보여줌
     fn list_header(&mut self, ui: &mut egui::Ui) {
         let mut delete = None;
+        let mut remove = None;
         ui.horizontal(|ui| {
             let count = self.files.len();
             let title = match &self.selected {
                 Some(selected) => {
                     let chosen = selected.len();
-                    tr!("{chosen} / {count}개 선택", "{chosen} of {count} selected")
+                    tr!("{chosen}개 선택", "{chosen} selected")
                 }
-                None => tr!("저장된 목록 ({count})", "Saved files ({count})"),
+                None => tr!("재생목록 ({count})", "Playlist ({count})"),
             };
             ui.label(egui::RichText::new(title).strong());
 
@@ -1074,8 +1120,8 @@ impl App {
             ui.with_layout(right_to_left, |ui| {
                 let Some(selected) = &mut self.selected else {
                     let hint = tr!(
-                        "편집: 선택 삭제, 순서 바꾸기",
-                        "Edit: delete files or reorder",
+                        "편집: 빼기, 삭제, 순서 바꾸기",
+                        "Edit: remove, delete, or reorder",
                     );
                     ui.add_enabled_ui(!self.files.is_empty(), |ui| {
                         if icons::button(ui, Icon::Edit, hint).clicked() {
@@ -1087,11 +1133,31 @@ impl App {
 
                 let done = ui.button(tr!("완료", "Done")).clicked();
                 ui.add_enabled_ui(!selected.is_empty(), |ui| {
-                    let hint = tr!("선택한 파일 삭제", "Delete selected files");
-                    if icons::button(ui, Icon::Trash, hint).clicked() {
-                        // 목록에 보이는 순서대로
-                        let chosen = self.files.iter().filter(|p| selected.contains(*p));
-                        delete = Some(chosen.cloned().collect());
+                    // 목록에 보이는 순서대로
+                    let chosen = || {
+                        let files = self.files.iter().filter(|p| selected.contains(*p));
+                        files.cloned().collect::<Vec<_>>()
+                    };
+                    // 오른쪽부터 배치
+                    if ui
+                        .button(tr!("파일 삭제", "Delete"))
+                        .on_hover_text(tr!(
+                            "원본 파일을 휴지통으로 옮기기",
+                            "Move the files to the trash"
+                        ))
+                        .clicked()
+                    {
+                        delete = Some(chosen());
+                    }
+                    if ui
+                        .button(tr!("목록에서 빼기", "Remove"))
+                        .on_hover_text(tr!(
+                            "원본 파일은 그대로 두기",
+                            "The files themselves are kept"
+                        ))
+                        .clicked()
+                    {
+                        remove = Some(chosen());
                     }
                 });
                 // 모두 골랐으면 같은 버튼으로 모두 해제
@@ -1118,11 +1184,24 @@ impl App {
         if let Some(paths) = delete {
             self.delete(paths);
         }
+        if let Some(paths) = remove {
+            let count = paths.len();
+            self.remove_from_list(&paths);
+            self.notice = tr!(
+                "{count}개를 목록에서 뺐어요",
+                "Removed {count} file(s) from the playlist",
+            );
+        }
     }
 
     // 저장된 mp3 목록 보여주기
     fn file_list(&mut self, ui: &mut egui::Ui) {
         self.list_header(ui);
+
+        if self.files.is_empty() {
+            empty_playlist(ui);
+            return;
+        }
 
         // 목록을 그리는 동안에는 클릭한 파일만 기억하고, 재생과 삭제는 그린 뒤에 하기
         let mut clicked = None;
@@ -1131,6 +1210,7 @@ impl App {
         // 편집 중에 각 줄이 놓인 위치와, 끌던 줄을 놓았는지
         let mut rows = Vec::new();
         let mut dropped = false;
+        let mut recheck = false;
         // 기본 스크롤 bar는 평소에 숨어 있으므로, 목록이 넘치면 항상 보이는 모양 사용
         ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
         egui::ScrollArea::vertical()
@@ -1141,6 +1221,7 @@ impl App {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 for path in &self.files {
                     let video = is_video(path);
+                    let missing = self.missing.contains(path);
                     // 이 파일이 재생 중이면 Some(일시정지 여부)
                     let current = self
                         .playing
@@ -1167,7 +1248,11 @@ impl App {
                         let hovered = ui.response().contains_pointer();
 
                         let highlighted = dragged || checked.unwrap_or(current.is_some());
-                        file_card(ui, highlighted, hovered).show(ui, |ui| {
+                        // 찾을 수 없는 파일은 흐리게
+                        if missing && checked.is_none() {
+                            ui.multiply_opacity(0.45);
+                        }
+                        file_card(ui, highlighted, hovered && !missing).show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 if let Some(checked) = checked {
@@ -1194,7 +1279,20 @@ impl App {
                                             name =
                                                 name.strong().color(ui.visuals().hyperlink_color);
                                         }
-                                        ui.add(egui::Label::new(name).truncate());
+                                        // 파일 이름 아래에 파일이 있는 위치
+                                        let mut place = location(path);
+                                        if missing {
+                                            place = tr!(
+                                                "파일을 찾을 수 없어요 · {place}",
+                                                "File not found · {place}",
+                                            );
+                                        }
+                                        ui.vertical(|ui| {
+                                            ui.spacing_mut().item_spacing.y = 1.0;
+                                            ui.add(egui::Label::new(name).truncate());
+                                            let place = egui::RichText::new(place).size(11.0);
+                                            ui.add(egui::Label::new(place.weak()).truncate());
+                                        });
                                     });
                                 });
                             });
@@ -1209,6 +1307,7 @@ impl App {
                                 "Click to select, drag to reorder",
                             )
                         }
+                        _ if missing => tr!("파일을 찾을 수 없어요", "The file cannot be found"),
                         Some(false) => tr!("눌러서 일시정지", "Click to pause"),
                         Some(true) => tr!("눌러서 계속 재생", "Click to resume"),
                         None if video => {
@@ -1237,6 +1336,9 @@ impl App {
                     if response.clicked() {
                         if checked.is_some() {
                             toggle_select = Some(path.clone());
+                        } else if missing {
+                            // 그 사이에 다시 생겼을 수 있으므로 한 번 더 확인
+                            recheck = true;
                         } else if current.is_some() {
                             toggle_pause = true;
                         } else {
@@ -1273,6 +1375,9 @@ impl App {
                 }
             });
 
+        if recheck {
+            self.check_missing();
+        }
         // 이미 골랐으면 해제, 아니면 선택
         if let Some(path) = toggle_select
             && let Some(selected) = &mut self.selected
@@ -1330,6 +1435,7 @@ impl App {
             return;
         };
 
+        let mut downloaded = Vec::new();
         // 그동안 쌓인 소식을 모두 처리
         self.status = loop {
             match job.receiver.try_recv() {
@@ -1347,7 +1453,8 @@ impl App {
                         ),
                     };
                 }
-                Ok(Update::Done(Ok(()))) => {
+                Ok(Update::Done(Ok(paths))) => {
+                    downloaded = paths;
                     let folder = self.folder.display();
                     break tr!("저장 완료! 위치: {folder}", "Saved to: {folder}");
                 }
@@ -1369,7 +1476,8 @@ impl App {
             }
         };
         self.job = None;
-        self.refresh_files();
+        // 받은 파일은 재생목록 맨 위에 추가
+        self.add_files(downloaded);
     }
 }
 
@@ -1379,12 +1487,20 @@ impl eframe::App for App {
         self.check_download();
         self.check_playing();
 
-        // 다른 곳에서 폴더가 바뀌었을 수 있으므로, 창으로 돌아오면 목록 다시 읽기
+        // 다른 곳에서 파일이 옮겨졌을 수 있으므로, 창으로 돌아오면 다시 확인
         let focused = ctx.input(|i| i.focused);
         if focused && !self.focused {
-            self.refresh_files();
+            self.check_missing();
         }
         self.focused = focused;
+
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            let files = i.raw.dropped_files.iter();
+            files.map(|file| file.path().to_path_buf()).collect()
+        });
+        if !dropped.is_empty() {
+            self.add_dropped(&dropped);
+        }
 
         // 재생 시간 표시와 다음 곡 재생을 위해 잠시 뒤 다시 확인하기
         if self.playing.is_some() {
@@ -1414,7 +1530,7 @@ impl eframe::App for App {
             Repeat::One => "one",
         };
         storage.set_string("repeat", repeat.to_string());
-        storage.set_string("order", format_orders(&self.orders));
+        storage.set_string("playlist", format_playlist(&self.files));
         let format = match self.format {
             Format::Mp3 => "mp3",
             Format::Mp4 => "mp4",
@@ -1431,6 +1547,10 @@ impl eframe::App for App {
 
         self.failure_dialog(ui);
         self.color_dialog(ui);
+        // 파일을 창 위로 끌어 오면 안내 보여주기
+        if ui.input(|i| !i.raw.hovered_files.is_empty()) {
+            drop_overlay(ui);
+        }
 
         egui::Panel::top("title")
             .frame(edge_frame(ui))
@@ -1519,7 +1639,9 @@ fn download(
     folder: &Path,
     format: Format,
     on_update: impl Fn(Update),
-) -> Result<(), String> {
+) -> Result<Vec<PathBuf>, String> {
+    //   --print             : 다 만든 파일의 경로를 알려주기
+    //   --no-quiet          : --print를 써도 진행 상황 출력은 유지
     //   --no-playlist       : 재생목록 링크여도 영상 하나만 받기
     //   --no-mtime          : 파일 날짜를 받은 시각으로 (최신순 정렬용)
     //   --newline           : 진행률을 한 줄씩 출력
@@ -1531,7 +1653,9 @@ fn download(
     let mut command = Command::new("yt-dlp");
     command
         .args(format_args(format))
-        .args(["--no-playlist", "--no-mtime"])
+        .args(["--no-playlist", "--no-mtime", "--no-quiet", "--progress"])
+        .arg("--print")
+        .arg(format!("after_move:{FILE_PREFIX}%(filepath)s"))
         .args(["--newline", "--color", "never", "--encoding", "utf-8"])
         .arg("--progress-template")
         .arg(format!(
@@ -1564,13 +1688,16 @@ fn download(
 
     // 일반 출력은 한 줄씩 읽으면서 진행 상황 알리기
     let stdout = child.stdout.take().expect("stdout을 piped로 설정함");
+    let mut files = Vec::new();
     for line in BufReader::new(stdout).split(b'\n') {
         let Ok(line) = line else {
             break;
         };
         let line = String::from_utf8_lossy(&line);
 
-        if let Some(progress) = parse_progress(&line) {
+        if let Some(path) = line.strip_prefix(FILE_PREFIX) {
+            files.push(PathBuf::from(path.trim_end_matches('\r')));
+        } else if let Some(progress) = parse_progress(&line) {
             on_update(Update::Progress(progress));
         } else if ["[ExtractAudio]", "[Merger]", "[VideoRemuxer]"]
             .iter()
@@ -1597,7 +1724,7 @@ fn download(
         return Err(reason);
     }
 
-    Ok(())
+    Ok(files)
 }
 
 // Windows에서 yt-dlp를 실행할 때 콘솔 창이 뜨지 않게 하기
@@ -1612,6 +1739,9 @@ fn hide_console(command: &mut Command) {
 // 다른 운영체제에서는 할 일이 없음
 #[cfg(not(windows))]
 fn hide_console(_command: &mut Command) {}
+
+// 받은 파일의 경로 줄을 구별하기 위한 표시
+const FILE_PREFIX: &str = "[file]";
 
 // 진행률 줄을 다른 출력과 구별하기 위한 표시
 const PROGRESS_PREFIX: &str = "[progress]";
@@ -1708,6 +1838,78 @@ fn popup_frame(ui: &egui::Ui) -> egui::Frame {
         .fill(colors.shade(0.08))
         .stroke(egui::Stroke::new(2.0, colors.point))
         .inner_margin(14)
+}
+
+// 재생목록이 비었을 때의 안내
+fn empty_playlist(ui: &mut egui::Ui) {
+    ui.add_space(8.0);
+    ui.vertical_centered(|ui| {
+        ui.label(egui::RichText::new(tr!("내려받거나", "Download something, or")).weak());
+        ui.label(
+            egui::RichText::new(tr!(
+                "mp3, mp4 파일과 폴더를 끌어다 놓으세요",
+                "drop mp3, mp4 files or folders here",
+            ))
+            .strong(),
+        );
+    });
+}
+
+// 파일을 끌어 오는 동안 창 전체에 보여주는 안내
+fn drop_overlay(ui: &egui::Ui) {
+    let colors = theme::palette(ui);
+    let screen = ui.ctx().content_rect();
+    let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("drop"));
+    let painter = ui.ctx().layer_painter(layer);
+    painter.rect_filled(screen, 0.0, colors.base.gamma_multiply(0.85));
+
+    // 점선 테두리
+    let inner = screen.shrink(12.0);
+    let corners = [
+        inner.left_top(),
+        inner.right_top(),
+        inner.right_bottom(),
+        inner.left_bottom(),
+        inner.left_top(),
+    ];
+    let line = egui::Stroke::new(3.0, colors.point);
+    painter.extend(egui::Shape::dashed_line(&corners, line, 10.0, 7.0));
+
+    let lines = [
+        (
+            tr!(
+                "여기에 놓으면 재생목록에 추가",
+                "Drop to add to the playlist"
+            ),
+            18.0,
+            colors.point,
+            -24.0,
+        ),
+        (
+            tr!("mp3, mp4 파일 또는 폴더", "mp3, mp4 files or folders"),
+            13.0,
+            colors.ink,
+            6.0,
+        ),
+        (
+            tr!(
+                "원본은 옮기거나 복사하지 않아요",
+                "Files are not moved or copied"
+            ),
+            13.0,
+            colors.ink,
+            26.0,
+        ),
+    ];
+    for (text, size, color, offset) in lines {
+        painter.text(
+            screen.center() + egui::vec2(0.0, offset),
+            egui::Align2::CENTER_CENTER,
+            text,
+            egui::FontId::proportional(size),
+            color,
+        );
+    }
 }
 
 // 끌어 놓는 위치가 몇 번째 줄 앞인지 (마지막 줄 뒤면 줄의 개수)
@@ -1867,15 +2069,7 @@ fn apply_order(files: Vec<PathBuf>, order: &[String]) -> Vec<PathBuf> {
 const ENTRY: char = '\u{1e}';
 const FIELD: char = '\u{1f}';
 
-// 폴더별 순서를 글자 하나로 바꾸기: "폴더, 이름, 이름..." 묶음의 나열
-fn format_orders(orders: &HashMap<String, Vec<String>>) -> String {
-    let entries: Vec<String> = orders
-        .iter()
-        .map(|(folder, names)| format!("{folder}{FIELD}{}", names.join(&FIELD.to_string())))
-        .collect();
-    entries.join(&ENTRY.to_string())
-}
-
+// 이전 version에서 저장한 폴더별 순서 읽기: "폴더, 이름, 이름..." 묶음의 나열
 fn parse_orders(text: &str) -> HashMap<String, Vec<String>> {
     text.split(ENTRY)
         .filter_map(|entry| {
@@ -1884,6 +2078,84 @@ fn parse_orders(text: &str) -> HashMap<String, Vec<String>> {
             Some((folder, fields.collect()))
         })
         .collect()
+}
+
+// 재생목록을 설정에 저장할 글자로 바꾸기
+fn format_playlist(files: &[PathBuf]) -> String {
+    let paths: Vec<&str> = files.iter().filter_map(|path| path.to_str()).collect();
+    paths.join(&ENTRY.to_string())
+}
+
+fn parse_playlist(text: &str) -> Vec<PathBuf> {
+    text.split(ENTRY)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
+// 목록에 없는 파일만 순서대로 맨 앞에 넣고, 넣은 개수를 돌려주기
+fn add_to_front(files: &mut Vec<PathBuf>, paths: Vec<PathBuf>) -> usize {
+    let mut known: HashSet<PathBuf> = files.iter().cloned().collect();
+    let new: Vec<PathBuf> = paths
+        .into_iter()
+        .filter(|path| known.insert(path.clone()))
+        .collect();
+    let count = new.len();
+    files.splice(0..0, new);
+    count
+}
+
+// 파일과 폴더들에서 mp3, mp4 모으기. 폴더는 하위 폴더까지 이름순으로 찾음
+fn collect_media(paths: &[PathBuf]) -> Vec<PathBuf> {
+    // 너무 깊은 폴더는 찾지 않음
+    const MAX_DEPTH: usize = 8;
+
+    fn visit(path: &Path, depth: usize, found: &mut Vec<PathBuf>) {
+        if path.is_file() {
+            if has_extension(path, "mp3") || is_video(path) {
+                found.push(path.to_path_buf());
+            }
+            return;
+        }
+        let Ok(entries) = fs::read_dir(path) else {
+            return;
+        };
+        let mut children: Vec<PathBuf> = entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                // 숨김 파일과, 제자리를 돌 수 있는 폴더 바로 가기는 제외
+                let hidden = entry.file_name().to_string_lossy().starts_with('.');
+                let linked_folder =
+                    entry.file_type().is_ok_and(|t| t.is_symlink()) && entry.path().is_dir();
+                !hidden && !linked_folder
+            })
+            .map(|entry| entry.path())
+            .collect();
+        children.sort();
+        for child in children {
+            if depth < MAX_DEPTH || child.is_file() {
+                visit(&child, depth + 1, found);
+            }
+        }
+    }
+
+    let mut found = Vec::new();
+    for path in paths {
+        visit(path, 0, &mut found);
+    }
+    found
+}
+
+// 파일이 있는 폴더. 홈 폴더는 ~ 로 줄여서 보여주기
+fn location(path: &Path) -> String {
+    let folder = path.parent().unwrap_or(path);
+    if let Some(home) = std::env::home_dir()
+        && let Ok(rest) = folder.strip_prefix(&home)
+    {
+        let short = Path::new("~").join(rest);
+        return short.display().to_string();
+    }
+    folder.display().to_string()
 }
 
 // 휴지통으로 옮겨도 되는지 확인 창으로 묻기
@@ -2128,13 +2400,29 @@ mod tests {
     }
 
     #[test]
-    fn saves_and_reads_orders() {
-        let orders = HashMap::from([
-            ("/music".to_string(), vec!["b.mp3".into(), "a.mp3".into()]),
-            ("/other folder".to_string(), vec!["c, d.mp4".into()]),
-        ]);
-        assert_eq!(parse_orders(&format_orders(&orders)), orders);
+    fn reads_old_orders() {
+        let text = format!("/music{FIELD}b.mp3{FIELD}a.mp3{ENTRY}/other{FIELD}c, d.mp4");
+        let orders = parse_orders(&text);
+        assert_eq!(orders["/music"], ["b.mp3", "a.mp3"]);
+        assert_eq!(orders["/other"], ["c, d.mp4"]);
         assert!(parse_orders("").is_empty());
+    }
+
+    #[test]
+    fn saves_and_reads_playlist() {
+        let files = ["/a b/x.mp3", "/c, d/y.mp4"].map(PathBuf::from).to_vec();
+        assert_eq!(parse_playlist(&format_playlist(&files)), files);
+        assert!(parse_playlist("").is_empty());
+    }
+
+    #[test]
+    fn adds_only_new_files_to_front() {
+        let mut files = vec![PathBuf::from("old.mp3")];
+        let new = ["a.mp3", "old.mp3", "b.mp3", "a.mp3"]
+            .map(PathBuf::from)
+            .to_vec();
+        assert_eq!(add_to_front(&mut files, new), 2);
+        assert_eq!(files, ["a.mp3", "b.mp3", "old.mp3"].map(PathBuf::from));
     }
 
     #[test]
