@@ -213,7 +213,6 @@ impl App {
             Some("one") => Repeat::One,
             _ => Repeat::Off,
         };
-        let shuffle = saved("shuffle").is_some_and(|v| v == "true");
         let format = match saved("format").as_deref() {
             Some("mp4") => Format::Mp4,
             _ => Format::Mp3,
@@ -242,7 +241,8 @@ impl App {
             volume,
             unmuted,
             repeat,
-            shuffle,
+            // 섞기는 저장하지 않고, 켤 때마다 목록 순서대로 시작
+            shuffle: false,
             history: Vec::new(),
             upcoming: Vec::new(),
             format,
@@ -1227,7 +1227,6 @@ impl eframe::App for App {
             Repeat::One => "one",
         };
         storage.set_string("repeat", repeat.to_string());
-        storage.set_string("shuffle", self.shuffle.to_string());
         storage.set_string("order", format_orders(&self.orders));
         let format = match self.format {
             Format::Mp3 => "mp3",
