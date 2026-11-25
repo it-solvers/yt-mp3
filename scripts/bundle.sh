@@ -12,8 +12,22 @@ app="target/release/bundle/YouTube MP3.app"
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
 
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp target/release/yt-mp3 "$app/Contents/MacOS/yt-mp3"
+
+# assets/icon.png를 크기별로 줄여서 macOS 아이콘 파일(.icns) 만들기
+iconset="target/release/bundle/AppIcon.iconset"
+rm -rf "$iconset"
+mkdir -p "$iconset"
+for size in 16 32 128 256 512; do
+    double=$((size * 2))
+    sips -z "$size" "$size" assets/icon.png \
+        --out "$iconset/icon_${size}x${size}.png" > /dev/null
+    sips -z "$double" "$double" assets/icon.png \
+        --out "$iconset/icon_${size}x${size}@2x.png" > /dev/null
+done
+iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
+rm -rf "$iconset"
 
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -26,6 +40,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <string>local.yt-mp3</string>
     <key>CFBundleExecutable</key>
     <string>yt-mp3</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

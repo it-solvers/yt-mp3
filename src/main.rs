@@ -10,11 +10,16 @@ use std::thread;
 use std::time::Duration;
 
 fn main() -> eframe::Result {
+    // 창과 Dock에 보일 아이콘. 지정하지 않으면 eframe 기본 아이콘이 쓰임
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
+        .expect("프로그램에 포함한 아이콘은 올바른 PNG");
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             // 설정이 저장되는 폴더 이름으로도 쓰임
             .with_app_id("yt-mp3")
-            .with_inner_size([560.0, 560.0]),
+            .with_inner_size([560.0, 560.0])
+            .with_icon(icon),
         ..Default::default()
     };
 
