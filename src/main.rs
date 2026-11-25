@@ -590,42 +590,30 @@ impl App {
                     file_card(ui, current.is_some()).show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            if video {
-                                icons::picture(ui, Icon::Video, tr!("동영상", "Video"));
-                            } else {
-                                icons::picture(ui, Icon::Music, tr!("소리", "Audio"));
+                            // 앞의 아이콘이 재생 버튼
+                            let kind = if video { Icon::Video } else { Icon::Music };
+                            let hint = match current {
+                                Some(false) => tr!("일시정지", "Pause"),
+                                Some(true) => tr!("계속 재생", "Resume"),
+                                None if video => {
+                                    tr!("기본 player로 열기", "Open in default player")
+                                }
+                                None => tr!("재생", "Play"),
+                            };
+                            if icons::file_button(ui, kind, current, hint).clicked() {
+                                if current.is_some() {
+                                    toggle_pause = true;
+                                } else {
+                                    clicked = Some(path.clone());
+                                }
                             }
 
-                            // 버튼은 오른쪽 끝에 배치
+                            // 삭제 버튼은 오른쪽 끝에 배치
                             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
                             ui.with_layout(right_to_left, |ui| {
                                 let delete = tr!("삭제", "Delete");
                                 if icons::button(ui, Icon::Trash, delete).clicked() {
                                     to_delete = Some(path.clone());
-                                }
-
-                                // 재생 중인 곡의 버튼은 일시정지와 계속 재생
-                                match current {
-                                    Some(false) => {
-                                        let pause = tr!("일시정지", "Pause");
-                                        toggle_pause |=
-                                            icons::button(ui, Icon::Pause, pause).clicked();
-                                    }
-                                    Some(true) => {
-                                        let resume = tr!("계속 재생", "Resume");
-                                        toggle_pause |=
-                                            icons::button(ui, Icon::Play, resume).clicked();
-                                    }
-                                    None => {
-                                        let hint = if video {
-                                            tr!("기본 player로 열기", "Open in default player")
-                                        } else {
-                                            tr!("재생", "Play")
-                                        };
-                                        if icons::button(ui, Icon::Play, hint).clicked() {
-                                            clicked = Some(path.clone());
-                                        }
-                                    }
                                 }
 
                                 // 파일 이름은 남은 공간에 왼쪽부터 표시

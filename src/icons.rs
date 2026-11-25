@@ -1,5 +1,5 @@
 // 직접 그리는 아이콘.
-// 색은 theme.rs의 3색만 사용. 저장과 일시정지만 강조색, 파일 종류는 모양으로 구별.
+// 색은 theme.rs의 3색만 사용. 저장과 재생 중인 버튼만 강조색, 파일 종류는 모양으로 구별.
 // 이미지 파일 없이 도형으로 그려서 어떤 크기에서도 선명함
 
 use crate::theme::palette;
@@ -90,47 +90,74 @@ pub fn clear_button(ui: &mut Ui, rect: Rect, label: String) -> Response {
         .on_hover_text(label)
 }
 
-// 설명용 그림 (누를 수 없음)
+// 목록 앞의 파일 아이콘 겸 재생 버튼.
+// 평소에는 파일 종류(kind: Music 또는 Video)를 보여주고, 마우스를 올리면 재생 모양.
+// paused는 이 파일이 재생 중일 때의 일시정지 여부, 재생 중이 아니면 None
+pub fn file_button(ui: &mut Ui, kind: Icon, paused: Option<bool>, label: String) -> Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
+    describe(&response, ui, &label);
+
+    if ui.is_rect_visible(rect) {
+        let colors = palette(ui);
+        let radius = CornerRadius::same(8);
+        let hovered = response.hovered();
+
+        if paused.is_some() || hovered {
+            // 재생 중이거나 마우스를 올린 상태: 강조색 버튼
+            let fill = if hovered {
+                colors.point.lerp_to_gamma(colors.ink, 0.15)
+            } else {
+                colors.point
+            };
+            let glyph = match paused {
+                Some(false) => Icon::Pause,
+                _ => Icon::Play,
+            };
+            ui.painter().rect_filled(rect, radius, fill);
+            paint(ui.painter(), rect.shrink(7.0), glyph, colors.on_point, fill);
+        } else if matches!(kind, Icon::Video) {
+            // 동영상 파일: 밝게 채운 칸에 재생 삼각형
+            let fill = colors.shade(0.85);
+            ui.painter().rect_filled(rect, radius, fill);
+            paint(
+                ui.painter(),
+                rect.shrink(8.0),
+                Icon::Play,
+                colors.base,
+                fill,
+            );
+        } else {
+            // 소리 파일: 테두리만 있는 칸에 음표
+            let line = Stroke::new(1.5, colors.shade(0.35));
+            ui.painter()
+                .rect_stroke(rect, radius, line, StrokeKind::Inside);
+            paint(
+                ui.painter(),
+                rect.shrink(7.0),
+                kind,
+                colors.ink,
+                colors.base,
+            );
+        }
+    }
+
+    response
+        .on_hover_cursor(CursorIcon::PointingHand)
+        .on_hover_text(label)
+}
+
+// 설명용 그림 (누를 수 없음). 배경 없이 그려서 버튼과 구별
 pub fn picture(ui: &mut Ui, icon: Icon, label: String) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
     if ui.is_rect_visible(rect) {
         let colors = palette(ui);
-        let radius = CornerRadius::same(8);
-        match icon {
-            // 소리 파일: 테두리만 있는 칸에 음표
-            Icon::Music => {
-                let line = Stroke::new(1.5, colors.shade(0.35));
-                ui.painter()
-                    .rect_stroke(rect, radius, line, StrokeKind::Inside);
-                paint(
-                    ui.painter(),
-                    rect.shrink(7.0),
-                    icon,
-                    colors.ink,
-                    colors.base,
-                );
-            }
-            // 동영상 파일: 밝게 채운 칸에 재생 삼각형
-            Icon::Video => {
-                let fill = colors.shade(0.85);
-                ui.painter().rect_filled(rect, radius, fill);
-                paint(
-                    ui.painter(),
-                    rect.shrink(8.0),
-                    Icon::Play,
-                    colors.base,
-                    fill,
-                );
-            }
-            // 나머지는 배경 없이 그려서 버튼과 구별
-            _ => paint(
-                ui.painter(),
-                rect.shrink(6.0),
-                icon,
-                colors.shade(0.55),
-                colors.base,
-            ),
-        }
+        paint(
+            ui.painter(),
+            rect.shrink(6.0),
+            icon,
+            colors.shade(0.55),
+            colors.base,
+        );
     }
     response.on_hover_text(label)
 }
