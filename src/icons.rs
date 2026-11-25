@@ -19,7 +19,6 @@ pub enum Icon {
     Repeat,
     RepeatOne,
     Shuffle,
-    Refresh,
     Trash,
     Folder,
     Download,
@@ -318,31 +317,6 @@ fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                     color,
                 );
             }
-        }
-        Icon::Refresh => {
-            // 오른쪽 위가 열린 굵은 원과 화살촉
-            let center = rect.center();
-            let radius = rect.width() * 0.39;
-            let point = |degrees: f32| {
-                let angle = degrees.to_radians();
-                center + radius * vec2(angle.cos(), angle.sin())
-            };
-            let arc = (0..=24).map(|i| point(i as f32 * 285.0 / 24.0)).collect();
-            painter.add(Shape::line(arc, Stroke::new(rect.width() * 0.19, color)));
-            let tip = point(285.0);
-            let size = rect.width() * 0.34;
-            // 원이 진행하는 방향과 그에 수직인 방향
-            let angle = 285.0_f32.to_radians();
-            let forward = vec2(-angle.sin(), angle.cos());
-            let side = vec2(angle.cos(), angle.sin());
-            fill(
-                vec![
-                    tip + forward * size,
-                    tip + side * size * 0.85,
-                    tip - side * size * 0.85,
-                ],
-                color,
-            );
         }
         Icon::Trash => {
             block(0.34, 0.00, 0.66, 0.18, 1);

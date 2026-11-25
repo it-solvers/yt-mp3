@@ -118,6 +118,8 @@ struct App {
     playing: Option<Playing>,
     // 편집 중이면 Some(고른 파일), 아니면 None
     selected: Option<HashSet<PathBuf>>,
+    // 직전에 창이 선택되어 있었는지. 다시 선택된 순간을 알아내는 데 사용
+    focused: bool,
     // 편집 중에 끌고 있는 파일
     dragging: Option<PathBuf>,
     // 사용자가 정한 순서. 폴더별 파일 이름 목록
@@ -236,6 +238,7 @@ impl App {
             files: Vec::new(),
             playing: None,
             selected: None,
+            focused: true,
             dragging: None,
             orders: saved("order").map(|v| parse_orders(&v)).unwrap_or_default(),
             volume,
@@ -906,9 +909,6 @@ impl App {
             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
             ui.with_layout(right_to_left, |ui| {
                 let Some(selected) = &mut self.selected else {
-                    if icons::button(ui, Icon::Refresh, tr!("새로고침", "Refresh")).clicked() {
-                        self.refresh_files();
-                    }
                     let hint = tr!(
                         "편집: 선택 삭제, 순서 바꾸기",
                         "Edit: delete files or reorder",
@@ -1207,6 +1207,13 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.check_download();
         self.check_playing();
+
+        // 다른 곳에서 폴더가 바뀌었을 수 있으므로, 창으로 돌아오면 목록 다시 읽기
+        let focused = ctx.input(|i| i.focused);
+        if focused && !self.focused {
+            self.refresh_files();
+        }
+        self.focused = focused;
 
         // 재생 시간 표시와 다음 곡 재생을 위해 잠시 뒤 다시 확인하기
         if self.playing.is_some() {
