@@ -99,6 +99,9 @@ fn supported_sites(ui: &mut egui::Ui) {
     );
 }
 
+// 재생 영역의 내용 높이 (버튼 줄 28 + 간격 3 + 탐색 bar 18)
+const PLAYER_HEIGHT: f32 = 49.0;
+
 // 화면이 기억해야 하는 값들
 struct App {
     url: String,
@@ -342,9 +345,13 @@ impl App {
         }
     }
 
-    // 화면 아래의 재생 bar: 일시정지/정지, 곡 이름, 음량, 탐색 bar
+    // 목록 위의 재생 영역: 일시정지/정지, 곡 이름, 음량, 탐색 bar
     fn player_bar(&mut self, ui: &mut egui::Ui) {
         let Some(playing) = &mut self.playing else {
+            ui.centered_and_justified(|ui| {
+                let hint = tr!("재생할 곡을 선택하세요", "Select a track to play");
+                ui.label(egui::RichText::new(hint).weak());
+            });
             return;
         };
 
@@ -809,14 +816,6 @@ impl eframe::App for App {
         // 아래쪽 영역은 나중에 배치한 것이 위에 놓임.
         // 남은 공간을 쓰는 CentralPanel보다 먼저 배치해야 함
 
-        // 재생 중일 때만 보이는 재생 bar
-        if self.playing.is_some() {
-            egui::Panel::bottom("player")
-                .default_size(56.0)
-                .frame(edge_frame(ui))
-                .show(ui, |ui| self.player_bar(ui));
-        }
-
         // 삭제 결과 등의 안내는 분리선 위에 표시
         if !self.notice.is_empty() {
             egui::Panel::bottom("notice")
@@ -852,6 +851,13 @@ impl eframe::App for App {
             }
 
             ui.separator();
+            // 재생 영역은 항상 보여줘서, 재생을 시작해도 목록이 움직이지 않게 하기
+            player_frame(ui).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.set_height(PLAYER_HEIGHT);
+                self.player_bar(ui);
+            });
+            ui.add_space(4.0);
             self.file_list(ui);
         });
     }
@@ -1028,7 +1034,15 @@ fn tool_path() -> OsString {
     std::env::join_paths(folders).unwrap_or(current)
 }
 
-// 헤더와 재생 bar의 틀. 본문과 구별되는 바탕색 사용
+// 재생 영역의 틀. 헤더와 같은 바탕색의 둥근 카드
+fn player_frame(ui: &egui::Ui) -> egui::Frame {
+    egui::Frame::new()
+        .fill(theme::palette(ui).edge)
+        .corner_radius(12)
+        .inner_margin(egui::Margin::symmetric(10, 8))
+}
+
+// 헤더의 틀. 본문과 구별되는 바탕색 사용
 fn edge_frame(ui: &egui::Ui) -> egui::Frame {
     egui::Frame::side_top_panel(ui.style()).fill(theme::palette(ui).edge)
 }
