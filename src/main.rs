@@ -387,17 +387,23 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let idle = self.job.is_none();
 
-        // 화면 하단의 삭제 결과와 저작권 정보.
-        // 남은 공간을 쓰는 CentralPanel보다 먼저 배치
-        egui::Panel::bottom("footer").show(ui, |ui| {
-            if !self.notice.is_empty() {
-                // 파일 이름이 길면 한 줄에 맞게 줄이기
-                ui.add(egui::Label::new(&self.notice).truncate());
-            }
+        // 화면 하단의 저작권 정보. 남은 공간을 쓰는 CentralPanel보다 먼저 배치
+        egui::Panel::bottom("copyright").show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.label(egui::RichText::new(COPYRIGHT).size(11.0).weak());
             });
         });
+
+        // 삭제 결과는 저작권 정보의 분리선 위에 표시.
+        // 아래쪽 영역은 나중에 배치한 것이 위에 놓임
+        if !self.notice.is_empty() {
+            egui::Panel::bottom("notice")
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    // 파일 이름이 길면 한 줄에 맞게 줄이기
+                    ui.add(egui::Label::new(&self.notice).truncate());
+                });
+        }
 
         egui::CentralPanel::default().show(ui, |ui| {
             // 다운로드 중에는 입력과 버튼을 비활성화
