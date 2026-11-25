@@ -33,6 +33,9 @@ fn main() -> eframe::Result {
     )
 }
 
+// 화면 하단에 보여줄 저작권 정보
+const COPYRIGHT: &str = "© 2026 아이티해결단(이혁). All rights reserved.";
+
 // 화면이 기억해야 하는 값들
 struct App {
     url: String,
@@ -339,6 +342,13 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let idle = self.job.is_none();
+
+        // 화면 하단의 저작권 정보. 남은 공간을 쓰는 CentralPanel보다 먼저 배치
+        egui::Panel::bottom("copyright").show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new(COPYRIGHT).small().weak());
+            });
+        });
 
         egui::CentralPanel::default().show(ui, |ui| {
             // 다운로드 중에는 입력과 버튼을 비활성화
