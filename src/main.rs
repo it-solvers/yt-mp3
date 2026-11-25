@@ -274,6 +274,8 @@ impl App {
         ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
         egui::ScrollArea::vertical()
             .auto_shrink(false)
+            // 기본 최소 높이(64)를 없애서, 공간이 좁아도 하단 영역 뒤로 넘치지 않게 하기
+            .min_scrolled_height(0.0)
             .show(ui, |ui| {
                 for path in &self.files {
                     let is_current = self.playing.as_ref().is_some_and(|p| &p.path == path);
