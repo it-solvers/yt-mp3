@@ -214,7 +214,7 @@ impl App {
         app
     }
 
-    // 화면 상단: 왼쪽에 앱 이름, 오른쪽에 언어 선택 버튼
+    // 화면 상단: 왼쪽에 앱 이름과 정보 버튼, 오른쪽에 언어 전환 버튼
     fn title_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(app_name()).heading().strong());
@@ -228,13 +228,15 @@ impl App {
 
             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
             ui.with_layout(right_to_left, |ui| {
+                // 누를 때마다 한국어와 영어 바꾸기. 설명은 바뀔 언어로 적기
                 let korean = lang::is_korean();
-                // 오른쪽부터 배치하므로 English를 먼저 추가
-                if ui.selectable_label(!korean, "English").clicked() {
-                    self.set_language(ui.ctx(), false);
-                }
-                if ui.selectable_label(korean, "한국어").clicked() {
-                    self.set_language(ui.ctx(), true);
+                let hint = if korean {
+                    "Switch to English"
+                } else {
+                    "한국어로 바꾸기"
+                };
+                if icons::button(ui, Icon::Globe, hint.to_string()).clicked() {
+                    self.set_language(ui.ctx(), !korean);
                 }
             });
         });

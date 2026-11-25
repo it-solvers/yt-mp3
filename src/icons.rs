@@ -20,6 +20,8 @@ pub enum Icon {
     Speaker,
     // 프로그램 정보
     Info,
+    // 언어 바꾸기
+    Globe,
     // 소리 파일 표시
     Music,
     // 동영상 파일 표시
@@ -297,6 +299,17 @@ fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32, background: 
             );
             painter.circle_filled(at(0.50, 0.27), rect.width() * 0.10, color);
             block(0.42, 0.43, 0.58, 0.78, 1);
+        }
+        Icon::Globe => {
+            // 바깥 원, 가운데의 세로 타원(경선), 가로선(위선)
+            let line = Stroke::new(rect.width() * 0.10, color);
+            painter.circle_stroke(rect.center(), rect.width() * 0.50, line);
+            let meridian = (0..=32).map(|i| {
+                let angle = (i as f32 / 32.0) * std::f32::consts::TAU;
+                rect.center() + rect.width() * vec2(0.22 * angle.cos(), 0.50 * angle.sin())
+            });
+            painter.add(Shape::line(meridian.collect(), line));
+            painter.line_segment([at(0.02, 0.50), at(0.98, 0.50)], line);
         }
         Icon::Music => {
             // 두 음표를 잇는 막대, 기둥, 머리
