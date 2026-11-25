@@ -129,6 +129,8 @@ struct App {
     shuffle: bool,
     // 섞기 중에 지나온 곡. 이전 곡으로 돌아가고 같은 곡을 다시 고르지 않는 데 사용
     history: Vec<PathBuf>,
+    // 섞기 중에 이전 곡으로 돌아온 뒤, 다음 곡으로 다시 갈 곡
+    upcoming: Vec<PathBuf>,
     // 다운로드할 때 저장할 형식
     format: Format,
     // 정보창에 보여줄 앱 아이콘. 처음 열 때 만듦
@@ -236,6 +238,7 @@ impl App {
             repeat,
             shuffle,
             history: Vec::new(),
+            upcoming: Vec::new(),
             format,
             language_chosen,
             icon_texture: None,
@@ -370,6 +373,19 @@ impl App {
         }
     }
 
+    // 목록에서 직접 고른 곡 재생하기
+    fn choose(&mut self, path: PathBuf) {
+        // 섞기 중에는 방금 듣던 곡으로 돌아갈 수 있게 기억
+        if self.shuffle
+            && let Some(playing) = &self.playing
+            && playing.path != path
+        {
+            self.history.push(playing.path.clone());
+            self.upcoming.clear();
+        }
+        self.play(path);
+    }
+
     // 목록의 소리 파일 (동영상 제외)
     fn songs(&self) -> Vec<PathBuf> {
         self.files
@@ -387,10 +403,14 @@ impl App {
         }
 
         self.history.push(current.to_path_buf());
+        // 이전 곡으로 돌아왔었다면 지나갔던 순서대로 다시 앞으로
+        if let Some(path) = pop_existing(&mut self.upcoming, &songs) {
+            return Some(path);
+        }
         let mut candidates = unplayed(&songs, &self.history);
         if candidates.is_empty() && wrap {
-            // 모두 들었으면 방금 곡을 빼고 다시 섞기
-            self.history.clear();
+            // 모두 들었으면 방금 곡을 빼고 다시 섞기 (방금 곡으로는 돌아갈 수 있음)
+            self.history = vec![current.to_path_buf()];
             candidates = unplayed(&songs, &[current.to_path_buf()]);
             if candidates.is_empty() {
                 candidates = songs;
@@ -413,7 +433,12 @@ impl App {
         let current = playing.path.clone();
         let previous = if self.shuffle {
             // 지나온 곡 중에서 지금도 있는 가장 최근 곡
-            std::iter::from_fn(|| self.history.pop()).find(|path| self.files.contains(path))
+            let songs = self.songs();
+            let previous = pop_existing(&mut self.history, &songs);
+            if previous.is_some() {
+                self.upcoming.push(current.clone());
+            }
+            previous
         } else {
             step_song(&self.songs(), &current, false, true)
         };
@@ -553,6 +578,7 @@ impl App {
         {
             self.shuffle = !self.shuffle;
             self.history.clear();
+            self.upcoming.clear();
         }
 
         let active = self.playing.is_some();
@@ -1072,7 +1098,7 @@ impl App {
             if is_video(&path) {
                 self.open_video(&path);
             } else {
-                self.play(path);
+                self.choose(path);
             }
         }
         if let Some(path) = to_delete {
@@ -1731,6 +1757,11 @@ fn step_song(songs: &[PathBuf], current: &Path, forward: bool, wrap: bool) -> Op
         index.checked_sub(1).or(wrap.then_some(songs.len() - 1))
     };
     next.map(|i| songs[i].clone())
+}
+
+// 쌓아 둔 곡을 최근 것부터 꺼내서, 지금도 목록에 있는 첫 번째 곡
+fn pop_existing(stack: &mut Vec<PathBuf>, songs: &[PathBuf]) -> Option<PathBuf> {
+    std::iter::from_fn(|| stack.pop()).find(|path| songs.contains(path))
 }
 
 // 아직 지나오지 않은 곡
