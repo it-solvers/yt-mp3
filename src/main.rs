@@ -33,6 +33,8 @@ fn main() -> eframe::Result {
             // 설정이 저장되는 폴더 이름으로도 쓰임
             .with_app_id("yt-mp3")
             .with_inner_size([560.0, 560.0])
+            // 화면의 요소들이 겹치지 않는 최소 크기
+            .with_min_inner_size([360.0, 480.0])
             .with_icon(icon),
         ..Default::default()
     };
@@ -121,6 +123,8 @@ struct App {
     colors: theme::Choice,
     // 색상 선택 팝업이 열려 있는지
     choosing_colors: bool,
+    // 프로그램 정보 팝업이 열려 있는지
+    showing_about: bool,
     // 다운로드 중이면 Some, 아니면 None
     job: Option<Job>,
     // 재생목록. 파일은 원래 위치에 두고 경로만 기억
@@ -256,6 +260,7 @@ impl App {
                     .map(|key| saved(key).and_then(|v| theme::parse_colors(&v))),
             },
             choosing_colors: false,
+            showing_about: false,
             job: None,
             files: Vec::new(),
             missing: HashSet::new(),
@@ -295,14 +300,9 @@ impl App {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(app_name()).heading().strong());
 
-            // 정보 버튼: 누르면 열리고, 바깥을 누르면 닫힘
-            let info = icons::button(ui, Icon::Info, tr!("프로그램 정보", "About"));
-            let frame = popup_frame(ui);
-            egui::Popup::from_toggle_button_response(&info)
-                .frame(frame)
-                // 안의 내용을 읽는 동안에는 닫히지 않고, 바깥을 누르면 닫힘
-                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                .show(|ui| self.about(ui));
+            if icons::button(ui, Icon::Info, tr!("프로그램 정보", "About")).clicked() {
+                self.showing_about = true;
+            }
 
             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
             ui.with_layout(right_to_left, |ui| {
@@ -324,9 +324,20 @@ impl App {
         });
     }
 
-    // 프로그램 정보: 아이콘, 이름, version, 지원 사이트, 저작권, 오픈소스 license
+    // 프로그램 정보 팝업
+    fn about_dialog(&mut self, ui: &mut egui::Ui) {
+        if !self.showing_about {
+            return;
+        }
+        let title = tr!("프로그램 정보", "About");
+        let closed = dialog(ui, "about", &title, |ui| self.about(ui), |_| {});
+        if closed {
+            self.showing_about = false;
+        }
+    }
+
+    // 정보 팝업의 내용: 아이콘, 이름, version, 지원 사이트, 저작권, 오픈소스 license
     fn about(&mut self, ui: &mut egui::Ui) {
-        ui.set_width(290.0);
         let texture = self.icon_texture.get_or_insert_with(|| {
             let icon = app_icon();
             let size = [icon.width as usize, icon.height as usize];
@@ -369,53 +380,46 @@ impl App {
         let Some(failure) = &mut self.failure else {
             return;
         };
-        let modal = egui::Modal::new(egui::Id::unique("failure")).frame(popup_frame(ui));
-        let mut close = false;
-        let response = modal.show(ui.ctx(), |ui| {
-            ui.set_width((ui.ctx().content_rect().width() - 80.0).min(340.0));
-            let strong = ui.visuals().strong_text_color();
-            let title = tr!("다운로드에 실패했어요", "Download failed");
-            ui.label(egui::RichText::new(title).size(16.0).strong().color(strong));
+        let title = tr!("다운로드에 실패했어요", "Download failed");
+        // 본문과 아래 버튼이 함께 쓰는 값
+        let reason = failure.reason.clone();
+        let closed = dialog(
+            ui,
+            "failure",
+            &title,
+            |ui| {
+                // 긴 오류는 작은 영역 안에서 스크롤
+                egui::Frame::new()
+                    .fill(theme::palette(ui).shade(0.14))
+                    .corner_radius(8)
+                    .inner_margin(8)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        egui::ScrollArea::vertical()
+                            .id_salt("reason")
+                            .max_height(80.0)
+                            .show(ui, |ui| {
+                                let text = egui::RichText::new(&reason).monospace().size(11.0);
+                                ui.add(egui::Label::new(text).wrap());
+                            });
+                    });
 
-            // 긴 오류는 작은 영역 안에서 스크롤
-            egui::Frame::new()
-                .fill(theme::palette(ui).shade(0.14))
-                .corner_radius(8)
-                .inner_margin(8)
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    egui::ScrollArea::vertical()
-                        .max_height(80.0)
-                        .show(ui, |ui| {
-                            let reason =
-                                egui::RichText::new(&failure.reason).monospace().size(11.0);
-                            ui.add(egui::Label::new(reason).wrap());
-                        });
-                });
-
-            ui.separator();
-            supported_sites(ui, false);
-            ui.add_space(6.0);
-
-            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), 28.0),
-                right_to_left,
-                |ui| {
-                    close = ui.button(tr!("확인", "OK")).clicked();
-                    let copy = if failure.copied {
-                        tr!("복사했어요", "Copied")
-                    } else {
-                        tr!("오류 내용 복사", "Copy error")
-                    };
-                    if ui.button(copy).clicked() {
-                        ui.ctx().copy_text(failure.reason.clone());
-                        failure.copied = true;
-                    }
-                },
-            );
-        });
-        if close || response.should_close() {
+                ui.separator();
+                supported_sites(ui, false);
+            },
+            |ui| {
+                let copy = if failure.copied {
+                    tr!("복사했어요", "Copied")
+                } else {
+                    tr!("오류 내용 복사", "Copy error")
+                };
+                if ui.button(copy).clicked() {
+                    ui.ctx().copy_text(failure.reason.clone());
+                    failure.copied = true;
+                }
+            },
+        );
+        if closed {
             self.failure = None;
         }
     }
@@ -428,16 +432,11 @@ impl App {
         // 직접 고른 색은 지금 보고 있는 화면 모드에 적용
         let mode = usize::from(!ui.visuals().dark_mode);
         let before = self.colors;
-        let choice = &mut self.colors;
+        let choice = std::cell::RefCell::new(self.colors);
 
-        let modal = egui::Modal::new(egui::Id::unique("colors")).frame(popup_frame(ui));
-        let mut close = false;
-        let response = modal.show(ui.ctx(), |ui| {
-            ui.set_width(280.0);
-            let strong = ui.visuals().strong_text_color();
-            let title = tr!("화면 색상", "Colors");
-            ui.label(egui::RichText::new(title).size(16.0).strong().color(strong));
-
+        let title = tr!("화면 색상", "Colors");
+        let body = |ui: &mut egui::Ui| {
+            let mut choice = choice.borrow_mut();
             let names = [
                 tr!("하늘", "Sky"),
                 tr!("산호", "Coral"),
@@ -483,22 +482,16 @@ impl App {
             if changed {
                 choice.custom[mode] = Some(colors);
             }
+        };
+        let footer = |ui: &mut egui::Ui| {
+            if ui.button(tr!("처음 색으로", "Reset")).clicked() {
+                *choice.borrow_mut() = theme::Choice::default();
+            }
+        };
+        let closed = dialog(ui, "colors", &title, body, footer);
 
-            ui.add_space(6.0);
-            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), 28.0),
-                right_to_left,
-                |ui| {
-                    close = ui.button(tr!("완료", "Done")).clicked();
-                    if ui.button(tr!("처음 색으로", "Reset")).clicked() {
-                        *choice = theme::Choice::default();
-                    }
-                },
-            );
-        });
-
-        if close || response.should_close() {
+        self.colors = choice.into_inner();
+        if closed {
             self.choosing_colors = false;
         }
         if self.colors != before {
@@ -1545,8 +1538,9 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let idle = self.job.is_none();
 
-        self.failure_dialog(ui);
+        self.about_dialog(ui);
         self.color_dialog(ui);
+        self.failure_dialog(ui);
         // 파일을 창 위로 끌어 오면 안내 보여주기
         if ui.input(|i| !i.raw.hovered_files.is_empty()) {
             drop_overlay(ui);
@@ -1795,6 +1789,52 @@ fn player_frame(ui: &egui::Ui) -> egui::Frame {
 // 헤더의 틀. 본문과 구별되는 바탕색 사용
 fn edge_frame(ui: &egui::Ui) -> egui::Frame {
     egui::Frame::side_top_panel(ui.style()).fill(theme::palette(ui).edge)
+}
+
+// 뒤의 화면을 어둡게 덮어 누르지 못하게 하는 팝업. 닫아야 하면 true.
+// 닫기는 오른쪽 위의 × 또는 Esc. body는 창이 작으면 스크롤되고,
+// 제목과 footer의 버튼은 항상 보임
+fn dialog(
+    ui: &egui::Ui,
+    id: &str,
+    title: &str,
+    body: impl FnOnce(&mut egui::Ui),
+    footer: impl FnOnce(&mut egui::Ui),
+) -> bool {
+    let screen = ui.ctx().content_rect().size();
+    let mut closed = false;
+
+    let modal = egui::Modal::new(egui::Id::unique(id)).frame(popup_frame(ui));
+    let response = modal.show(ui.ctx(), |ui| {
+        ui.set_width((screen.x - 64.0).min(320.0));
+
+        ui.horizontal(|ui| {
+            let strong = ui.visuals().strong_text_color();
+            ui.label(egui::RichText::new(title).size(16.0).strong().color(strong));
+            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+            ui.with_layout(right_to_left, |ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::Vec2::splat(26.0), egui::Sense::hover());
+                closed = icons::clear_button(ui, rect, tr!("닫기", "Close")).clicked();
+            });
+        });
+
+        // 창 높이에서 여백, 제목, 아래 버튼이 차지하는 높이를 뺀 만큼
+        let height = (screen.y - 140.0).max(60.0);
+        egui::ScrollArea::vertical()
+            .max_height(height)
+            .min_scrolled_height(0.0)
+            .auto_shrink([false, true])
+            .show(ui, body);
+
+        ui.with_layout(egui::Layout::top_down(egui::Align::Max), footer);
+    });
+
+    // 바깥을 눌러서는 닫지 않음. 색상 선택기 등이 열려 있으면 Esc는 그것을 닫음
+    let escaped = response.is_top_modal
+        && !response.any_popup_open
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    closed || escaped
 }
 
 // 색 조합 하나를 고르는 버튼. 세 색의 견본과 이름을 보여줌
