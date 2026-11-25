@@ -1,3 +1,6 @@
+// Windows 배포용 실행 파일은 뒤에 콘솔 창이 뜨지 않도록 설정
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use eframe::egui;
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use std::ffi::OsString;
@@ -79,13 +82,13 @@ impl App {
         let saved = |key: &str| storage.and_then(|s| s.get_string(key));
 
         // 저장해 둔 폴더가 지금도 있으면 사용하고,
-        // 아니면 기본값인 ~/Music (HOME이 없으면 현재 폴더)
+        // 아니면 기본값인 홈 폴더의 Music (홈 폴더를 모르면 현재 폴더)
         let folder = saved("folder")
             .map(PathBuf::from)
             .filter(|folder| folder.is_dir())
-            .unwrap_or_else(|| match std::env::var("HOME") {
-                Ok(home) => PathBuf::from(home).join("Music"),
-                Err(_) => PathBuf::from("."),
+            .unwrap_or_else(|| match std::env::home_dir() {
+                Some(home) => home.join("Music"),
+                None => PathBuf::from("."),
             });
         let volume = saved("volume")
             .and_then(|v| v.parse::<f32>().ok())
@@ -95,7 +98,8 @@ impl App {
         let mut app = Self {
             url: String::new(),
             folder,
-            status: String::from("URL을 입력해 주세요"),
+            // 보여줄 안내가 생기기 전까지는 비워 두기
+            status: String::new(),
             job: None,
             files: Vec::new(),
             playing: None,
@@ -370,15 +374,18 @@ impl eframe::App for App {
                 }
             });
 
-            ui.separator();
-            ui.horizontal(|ui| {
-                if !idle {
-                    ui.spinner();
+            // 알려줄 내용이 있을 때만 상태 줄 보여주기
+            if !self.status.is_empty() {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if !idle {
+                        ui.spinner();
+                    }
+                    ui.label(&self.status);
+                });
+                if let Some(progress) = self.job.as_ref().and_then(|job| job.progress) {
+                    ui.add(egui::ProgressBar::new(progress).show_percentage());
                 }
-                ui.label(&self.status);
-            });
-            if let Some(progress) = self.job.as_ref().and_then(|job| job.progress) {
-                ui.add(egui::ProgressBar::new(progress).show_percentage());
             }
 
             ui.separator();
@@ -396,12 +403,14 @@ fn download(url: &str, folder: &Path, on_update: impl Fn(Update)) -> Result<(), 
     //   --no-mtime          : 파일 날짜를 받은 시각으로 (최신순 정렬용)
     //   --newline           : 진행률을 한 줄씩 출력
     //   --color never       : 출력에 색상 코드를 넣지 않기
+    //   --encoding utf-8    : 한글이 깨지지 않도록 UTF-8로 출력
     //   --progress-template : 진행률 줄의 모양 지정
     //   -P 폴더             : 저장할 폴더 지정
     //   --                  : 이 뒤의 값은 옵션이 아니라고 알려주기
-    let mut child = Command::new("yt-dlp")
+    let mut command = Command::new("yt-dlp");
+    command
         .args(["-x", "--audio-format", "mp3", "--no-playlist", "--no-mtime"])
-        .args(["--newline", "--color", "never"])
+        .args(["--newline", "--color", "never", "--encoding", "utf-8"])
         .arg("--progress-template")
         .arg(format!(
             "download:{PROGRESS_PREFIX}%(progress._percent_str)s"
@@ -414,7 +423,10 @@ fn download(url: &str, folder: &Path, on_update: impl Fn(Update)) -> Result<(), 
         .env("PATH", tool_path())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    hide_console(&mut command);
+
+    let mut child = command
         .spawn()
         .map_err(|e| format!("yt-dlp를 실행할 수 없어요: {e}"))?;
 
@@ -457,6 +469,19 @@ fn download(url: &str, folder: &Path, on_update: impl Fn(Update)) -> Result<(), 
     Ok(())
 }
 
+// Windows에서 yt-dlp를 실행할 때 콘솔 창이 뜨지 않게 하기
+#[cfg(windows)]
+fn hide_console(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+// 다른 운영체제에서는 할 일이 없음
+#[cfg(not(windows))]
+fn hide_console(_command: &mut Command) {}
+
 // 진행률 줄을 다른 출력과 구별하기 위한 표시
 const PROGRESS_PREFIX: &str = "[progress]";
 
@@ -471,14 +496,27 @@ fn parse_progress(line: &str) -> Option<f32> {
     Some((percent / 100.0).clamp(0.0, 1.0))
 }
 
-// 외부 프로그램을 찾을 PATH 만들기.
-// Finder에서 실행한 .app은 PATH에 Homebrew 폴더가 없어서 뒤에 덧붙임
+// 외부 프로그램을 찾을 PATH 만들기
 fn tool_path() -> OsString {
     let current = std::env::var_os("PATH").unwrap_or_default();
-    let mut folders: Vec<PathBuf> = std::env::split_paths(&current).collect();
-    // Apple Silicon과 Intel Mac의 Homebrew 위치
+    let mut folders = Vec::new();
+
+    // 1. 프로그램과 함께 설치한 도구 (Windows 설치 파일의 tools 폴더).
+    //    PC에 다른 버전이 있어도 함께 설치한 것을 먼저 사용
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(folder) = exe.parent()
+    {
+        folders.push(folder.join("tools"));
+    }
+
+    // 2. 원래의 PATH
+    folders.extend(std::env::split_paths(&current));
+
+    // 3. Apple Silicon과 Intel Mac의 Homebrew 위치.
+    //    Finder에서 실행한 .app은 PATH에 이 폴더가 없음
     folders.push(PathBuf::from("/opt/homebrew/bin"));
     folders.push(PathBuf::from("/usr/local/bin"));
+
     std::env::join_paths(folders).unwrap_or(current)
 }
 
