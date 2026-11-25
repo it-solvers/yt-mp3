@@ -14,7 +14,6 @@ pub enum Icon {
     Refresh,
     Trash,
     Folder,
-    Help,
     Download,
     Speaker,
     // 바깥 앱에서 열기 (동영상)
@@ -189,20 +188,6 @@ fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 ],
                 stroke,
             ));
-        }
-        Icon::Help => {
-            painter.circle_stroke(rect.center(), rect.width() * 0.50, stroke);
-            line(vec![
-                at(0.35, 0.38),
-                at(0.38, 0.28),
-                at(0.50, 0.23),
-                at(0.62, 0.28),
-                at(0.65, 0.38),
-                at(0.60, 0.46),
-                at(0.50, 0.53),
-                at(0.50, 0.62),
-            ]);
-            painter.circle_filled(at(0.50, 0.76), stroke.width * 0.8, color);
         }
         Icon::Download => {
             line(vec![at(0.50, 0.02), at(0.50, 0.58)]);

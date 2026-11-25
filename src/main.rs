@@ -434,9 +434,6 @@ impl App {
             let label = tr!("저장하기", "Save");
             clicked = icons::primary_button(ui, Icon::Download, label, ACCENT, has_url).clicked();
 
-            // 지원 사이트 안내는 마우스를 올렸을 때만 보여주기
-            icons::button(ui, Icon::Help, supported_sites());
-
             let input = ui.add(
                 egui::TextEdit::singleline(&mut self.url)
                     .hint_text(tr!("영상 URL 붙여넣기", "Paste a video URL"))
@@ -460,6 +457,15 @@ impl App {
                 Format::Mp4,
                 tr!("MP4 (동영상)", "MP4 (video)"),
             );
+
+            // 지원 사이트 안내: 마우스를 올리거나 누르면 보여주기
+            let sites = tr!("지원 사이트", "Supported sites");
+            let link = ui
+                .link(egui::RichText::new(sites).size(11.0))
+                .on_hover_text(supported_sites());
+            egui::Popup::from_toggle_button_response(&link).show(|ui| {
+                ui.label(supported_sites());
+            });
 
             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
             ui.with_layout(right_to_left, |ui| {
