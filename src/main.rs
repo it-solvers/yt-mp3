@@ -6,6 +6,7 @@
 mod lang;
 
 mod icons;
+mod midi;
 mod theme;
 
 use eframe::egui;
@@ -2059,7 +2060,7 @@ fn has_extension(path: &Path, extension: &str) -> bool {
 }
 
 // 앱에서 재생하는 소리 파일의 확장자
-const AUDIO_EXTENSIONS: [&str; 6] = ["mp3", "wav", "flac", "ogg", "m4a", "aac"];
+const AUDIO_EXTENSIONS: [&str; 8] = ["mp3", "wav", "flac", "ogg", "m4a", "aac", "mid", "midi"];
 // 컴퓨터의 기본 앱으로 여는 동영상 파일의 확장자
 const VIDEO_EXTENSIONS: [&str; 7] = ["mp4", "mov", "m4v", "mkv", "webm", "avi", "wmv"];
 
@@ -2266,21 +2267,31 @@ fn move_to_trash(path: &Path) -> Result<(), trash::Error> {
 
 // 소리 출력 장치를 열고 파일 재생 시작하기
 fn start_playing(path: PathBuf) -> Result<Playing, String> {
-    let file = File::open(&path)
-        .map_err(|e| tr!("파일을 열 수 없어요: {e}", "cannot open the file: {e}"))?;
-    let source = Decoder::try_from(file).map_err(|e| {
+    let cannot_play = |e: String| {
         tr!(
             "재생할 수 없는 파일이에요: {e}",
             "cannot play this file: {e}"
         )
-    })?;
+    };
 
+    // MIDI는 소리를 만들어 가며 재생하고, 나머지는 파일의 소리를 풀어서 재생
+    if has_extension(&path, "mid") || has_extension(&path, "midi") {
+        let source = midi::MidiSource::open(&path).map_err(cannot_play)?;
+        return play_source(path, source);
+    }
+    let file = File::open(&path)
+        .map_err(|e| tr!("파일을 열 수 없어요: {e}", "cannot open the file: {e}"))?;
+    let source = Decoder::try_from(file).map_err(|e| cannot_play(e.to_string()))?;
+    play_source(path, source)
+}
+
+fn play_source(path: PathBuf, source: impl Source + Send + 'static) -> Result<Playing, String> {
     let total = source.total_duration();
 
     let mut device = DeviceSinkBuilder::open_default_sink().map_err(|e| {
         tr!(
             "소리 출력 장치를 열 수 없어요: {e}",
-            "cannot open the audio output: {e}"
+            "cannot open the audio output: {e}",
         )
     })?;
     // 정지할 때 터미널에 안내 문구가 나오지 않도록 끄기
@@ -2482,7 +2493,9 @@ mod tests {
 
     #[test]
     fn recognizes_media_files() {
-        for name in ["a.mp3", "b.FLAC", "c.m4a", "d.wav", "e.ogg", "f.aac"] {
+        for name in [
+            "a.mp3", "b.FLAC", "c.m4a", "d.wav", "e.ogg", "f.aac", "g.mid", "h.MIDI",
+        ] {
             let path = Path::new(name);
             assert!(is_media(path) && !is_video(path), "{name}");
         }
@@ -2492,7 +2505,7 @@ mod tests {
             let path = Path::new(name);
             assert!(is_media(path) && is_video(path), "{name}");
         }
-        for name in ["a.mid", "b.txt", "c.aiff", "mp3", "d.mp3.part"] {
+        for name in ["a.kar", "b.txt", "c.aiff", "mp3", "d.mp3.part"] {
             assert!(!is_media(Path::new(name)), "{name}");
         }
     }

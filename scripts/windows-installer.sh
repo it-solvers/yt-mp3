@@ -38,6 +38,7 @@ fetch() {
 }
 
 cargo build --release --target "$target"
+./scripts/fetch-soundfont.sh
 
 # 항상 새로 받아서 최신 버전을 담기
 rm -rf "$downloads" "$stage"
@@ -78,6 +79,8 @@ unzip -q -j "$downloads/deno.zip" 'deno.exe' -d "$stage/tools"
 unzip -p "$downloads/ffmpeg.zip" '*/LICENSE' > "$stage/licenses/ffmpeg-LICENSE.txt"
 unzip -p "$downloads/ffmpeg.zip" '*/README.txt' > "$stage/licenses/ffmpeg-README.txt"
 cp "target/$target/release/yt-mp3.exe" "$stage/"
+mkdir -p "$stage/soundfont"
+cp target/soundfont/GeneralUser-GS.sf2 target/soundfont/LICENSE.txt "$stage/soundfont/"
 
 # 담은 도구의 license 문서와 source 위치 모으기.
 # Windows 실행 파일은 Mac에서 실행할 수 없으므로 version은 release 정보에서 확인
@@ -124,7 +127,8 @@ python3 -I scripts/make_notices.py "$stage/licenses/THIRD-PARTY-NOTICES.txt" \
         "$stage/licenses/ffmpeg-README.txt" "$downloads/gpl-3.0.txt" \
     --section "yt-dlp $ytdlp_version (GPL-3.0-or-later)" "$downloads/yt-dlp-info.txt" \
         "$downloads/yt-dlp-LICENSE.txt" "$downloads/yt-dlp-THIRD-PARTY.txt" \
-    --section "deno $deno_version (MIT)" "$downloads/deno-info.txt" "$downloads/deno-LICENSE.md"
+    --section "deno $deno_version (MIT)" "$downloads/deno-info.txt" "$downloads/deno-LICENSE.md" \
+    --section "GeneralUser GS 2.0.3 SoundFont" target/soundfont/LICENSE.txt
 
 python3 scripts/make_ico.py assets/icon.png "$work/icon.ico"
 
