@@ -16,8 +16,8 @@ Unicode true
 !define OLD_NAME_SHORT "JustGrab"
 !define OLD_NAME_SHORT_KO "걍담아"
 !define OLD_NAME_PLAYER_KO "걍담아 플레이어"
-!define PUBLISHER "ITSolvers(Hyeok Lee)"
-!define PUBLISHER_KO "아이티해결단(이혁)"
+!define PUBLISHER "ITSolvers"
+!define PUBLISHER_KO "아이티해결단"
 ; 저작권자 표시
 !define COPYRIGHT "ITSolvers"
 !define COPYRIGHT_KO "아이티해결단"
