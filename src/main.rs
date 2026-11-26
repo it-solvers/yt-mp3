@@ -2358,7 +2358,7 @@ fn edge_frame(ui: &egui::Ui) -> egui::Frame {
 }
 
 // 뒤의 화면을 어둡게 덮어 누르지 못하게 하는 팝업. 닫아야 하면 true.
-// 닫기는 오른쪽 위의 × 또는 Esc. body는 창이 작으면 스크롤되고,
+// 닫기 버튼 없이 팝업 바깥을 누르거나 Esc로 닫음. body는 창이 작으면 스크롤되고,
 // 제목과 footer의 버튼은 항상 보임
 fn dialog(
     ui: &egui::Ui,
@@ -2368,22 +2368,12 @@ fn dialog(
     footer: impl FnOnce(&mut egui::Ui),
 ) -> bool {
     let screen = ui.ctx().content_rect().size();
-    let mut closed = false;
-
     let modal = egui::Modal::new(egui::Id::unique(id)).frame(popup_frame(ui));
     let response = modal.show(ui.ctx(), |ui| {
         ui.set_width((screen.x - 64.0).min(320.0));
 
-        ui.horizontal(|ui| {
-            let strong = ui.visuals().strong_text_color();
-            ui.label(egui::RichText::new(title).size(16.0).strong().color(strong));
-            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
-            ui.with_layout(right_to_left, |ui| {
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::Vec2::splat(26.0), egui::Sense::hover());
-                closed = icons::clear_button(ui, rect, tr!("닫기", "Close")).clicked();
-            });
-        });
+        let strong = ui.visuals().strong_text_color();
+        ui.label(egui::RichText::new(title).size(16.0).strong().color(strong));
 
         // 창 높이에서 여백, 제목, 아래 버튼이 차지하는 높이를 뺀 만큼
         let height = (screen.y - 140.0).max(60.0);
@@ -2396,11 +2386,8 @@ fn dialog(
         ui.with_layout(egui::Layout::top_down(egui::Align::Max), footer);
     });
 
-    // 바깥을 눌러서는 닫지 않음. 색상 선택기 등이 열려 있으면 Esc는 그것을 닫음
-    let escaped = response.is_top_modal
-        && !response.any_popup_open
-        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-    closed || escaped
+    // 색상 선택기 등이 열려 있으면 바깥 누르기와 Esc는 그것만 닫음
+    !response.any_popup_open && response.should_close()
 }
 
 // 색 조합 하나를 고르는 버튼. 세 색의 견본과 이름을 보여줌

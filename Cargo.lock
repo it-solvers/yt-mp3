@@ -4841,7 +4841,7 @@ dependencies = [
 
 [[package]]
 name = "yt-mp3"
-version = "1.0.74"
+version = "1.0.75"
 dependencies = [
  "chrono",
  "eframe",
