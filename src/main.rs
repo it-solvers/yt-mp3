@@ -1119,8 +1119,8 @@ impl App {
         // 재생 위치에 맞춰 움직이므로 일시정지하면 함께 멈춤
         let title = file_name(&playing.path);
         let position = playing.player.get_pos();
-        marquee(&mut ui, &title, position, |at| background.color_at(at));
-        if !playing.player.is_paused() {
+        let scrolling = marquee(&mut ui, &title, position, |at| background.color_at(at));
+        if scrolling && !playing.player.is_paused() {
             // 부드럽게 흐르도록 자주 다시 그리기
             ui.ctx().request_repaint_after(Duration::from_millis(33));
         }
@@ -3118,7 +3118,7 @@ fn marquee(
     text: &str,
     elapsed: Duration,
     background: impl Fn(egui::Pos2) -> egui::Color32,
-) {
+) -> bool {
     // 1초에 움직이는 거리와, 글자가 다시 나오기까지의 간격
     const SPEED: f32 = 40.0;
     const GAP: f32 = 60.0;
@@ -3129,10 +3129,17 @@ fn marquee(
 
     let size = egui::vec2(ui.available_width(), galley.size().y);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    // 다 보이는 짧은 제목은 가운데에 멈춰서 보여주기
+    if galley.size().x <= rect.width() {
+        let left = rect.center().x - galley.size().x / 2.0;
+        ui.painter()
+            .galley(egui::pos2(left, rect.top()), galley, color);
+        return false;
+    }
+
     // 양끝에서 글자가 서서히 사라지는 폭
     const FADE: f32 = 24.0;
-    // 짧은 제목은 화면에서 다 빠져나간 뒤에 다시 나오게 하기
-    let period = (galley.size().x + GAP).max(rect.width());
+    let period = galley.size().x + GAP;
     let offset = (elapsed.as_secs_f32() * SPEED) % period;
 
     // 영역 밖으로 나간 부분은 잘라내기
@@ -3149,6 +3156,7 @@ fn marquee(
 
     // 마우스를 올리면 전체 제목 보여주기
     response.on_hover_text(text);
+    true
 }
 
 // rect의 왼쪽 또는 오른쪽 끝에, 바깥으로 갈수록 background가 진해지는 띠 그리기
