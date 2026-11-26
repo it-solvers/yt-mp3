@@ -101,12 +101,37 @@ fn supported_sites(ui: &mut egui::Ui, notes: bool) {
     }
 }
 
+// 새로 추가한 줄의 깜빡임
+struct Blink {
+    paths: HashSet<PathBuf>,
+    // 처음 그린 시각
+    since: Option<f64>,
+}
+
+impl Blink {
+    // 깜빡이는 횟수와 한 번에 걸리는 시간(초)
+    const TIMES: f64 = 3.0;
+    const PERIOD: f64 = 0.6;
+
+    // now 시각의 밝기 (0.0 ~ 1.0)
+    fn strength(&mut self, now: f64) -> f32 {
+        let elapsed = now - *self.since.get_or_insert(now);
+        if elapsed >= Self::TIMES * Self::PERIOD {
+            return 0.0;
+        }
+        let phase = (elapsed / Self::PERIOD).fract();
+        (phase * std::f64::consts::PI).sin() as f32
+    }
+
+    fn finished(&self, now: f64) -> bool {
+        self.since
+            .is_some_and(|since| now - since >= Self::TIMES * Self::PERIOD)
+    }
+}
+
 // 잠시 보였다가 사라지는 알림
 struct Toast {
-    title: Option<String>,
     text: String,
-    // 저장 위치처럼 작게 덧붙이는 글
-    place: Option<String>,
     // 세기 시작한 시각. 아직 그리지 않았으면 None
     since: Option<f64>,
 }
@@ -116,27 +141,7 @@ impl Toast {
     const FADE: f32 = 0.5;
 
     fn new(text: String) -> Self {
-        Self {
-            title: None,
-            text,
-            place: None,
-            since: None,
-        }
-    }
-
-    // 저장 완료: 받은 파일의 이름과 위치
-    fn saved(files: &[PathBuf], folder: &Path) -> Self {
-        let names: Vec<String> = files.iter().map(|path| file_name(path)).collect();
-        // 파일 이름을 알 수 없으면 다운로드 폴더
-        let place = files
-            .first()
-            .map_or_else(|| folder.display().to_string(), |path| location(path));
-        Self {
-            title: Some(tr!("저장 완료!", "Saved!")),
-            text: names.join("\n"),
-            place: Some(tr!("위치: {place}", "Location: {place}")),
-            since: None,
-        }
+        Self { text, since: None }
     }
 
     // 흐려지기 전까지 보여주는 시간(초). 글이 길수록 오래 (2~5초)
@@ -185,6 +190,12 @@ struct App {
     files: Vec<PathBuf>,
     // 재생목록 중에서 지금은 찾을 수 없는 파일
     missing: HashSet<PathBuf>,
+    // 새로 추가되어 아직 확인하지 않은 파일 (NEW 표시)
+    new_files: HashSet<PathBuf>,
+    // 방금 추가한 줄을 깜빡이는 중이면 Some
+    blink: Option<Blink>,
+    // 목록을 이 파일의 줄까지 스크롤해야 하면 Some
+    scroll_to: Option<PathBuf>,
     // 재생 중이면 Some, 아니면 None
     playing: Option<Playing>,
     // 편집 중이면 Some(고른 파일), 아니면 None
@@ -318,6 +329,11 @@ impl App {
             job: None,
             files: Vec::new(),
             missing: HashSet::new(),
+            new_files: saved("new")
+                .map(|text| parse_playlist(&text).into_iter().collect())
+                .unwrap_or_default(),
+            blink: None,
+            scroll_to: None,
             playing: None,
             selected: None,
             focused: true,
@@ -345,6 +361,7 @@ impl App {
                 }
             }
         };
+        app.new_files.retain(|path| app.files.contains(path));
         app.check_missing();
         app
     }
@@ -462,19 +479,8 @@ impl App {
                 frame.show(ui, |ui| {
                     ui.set_width(width);
                     let strong = ui.visuals().strong_text_color();
-                    if let Some(title) = &toast.title {
-                        let title = egui::RichText::new(title).strong().color(strong);
-                        ui.label(title);
-                    }
                     let text = egui::RichText::new(&toast.text).color(strong);
                     ui.add(egui::Label::new(text).wrap());
-                    if let Some(place) = &toast.place {
-                        // 색이 있는 바탕에서도 읽히도록 글자색을 조금만 흐리게
-                        let place = egui::RichText::new(place)
-                            .size(11.0)
-                            .color(colors.veil(0.65));
-                        ui.add(egui::Label::new(place).wrap());
-                    }
                 });
             });
 
@@ -638,24 +644,32 @@ impl App {
             .collect();
     }
 
-    // 재생목록 맨 위에 파일 추가하기. 새로 추가한 개수를 돌려줌
+    // 재생목록 맨 아래에 파일 추가하기. 새로 추가한 개수를 돌려줌.
+    // 추가한 줄까지 스크롤해서 깜빡이고 NEW 표시를 남김
     fn add_files(&mut self, paths: Vec<PathBuf>) -> usize {
-        let added = add_to_front(&mut self.files, paths);
+        let added = add_to_end(&mut self.files, paths);
         self.check_missing();
-        added
+        if let Some(first) = added.first() {
+            self.scroll_to = Some(first.clone());
+            self.new_files.extend(added.iter().cloned());
+            self.blink = Some(Blink {
+                paths: added.iter().cloned().collect(),
+                since: None,
+            });
+        }
+        added.len()
     }
 
     // 창에 끌어다 놓은 파일과 폴더를 재생목록에 추가하기
     fn add_dropped(&mut self, dropped: &[PathBuf]) {
         let found = collect_media(dropped);
         let total = found.len();
-        let added = self.add_files(found);
-        self.toast = Some(Toast::new(if added > 0 {
-            tr!(
-                "{added}개를 재생목록에 추가했어요",
-                "Added {added} file(s) to the playlist",
-            )
-        } else if total > 0 {
+        if self.add_files(found) > 0 {
+            // 목록에서 바로 보이므로 알림은 생략
+            return;
+        }
+        // 목록이 달라지지 않았으면 이유 알려주기
+        self.toast = Some(Toast::new(if total > 0 {
             tr!("이미 재생목록에 있어요", "Already in the playlist")
         } else {
             tr!(
@@ -675,6 +689,7 @@ impl App {
             self.playing = None;
         }
         self.files.retain(|path| !paths.contains(path));
+        self.new_files.retain(|path| !paths.contains(path));
         self.check_missing();
         // 편집 중이면 편집은 계속하고 선택만 비우기
         if let Some(selected) = &mut self.selected {
@@ -684,6 +699,7 @@ impl App {
 
     // 선택한 파일 재생하기 (이전에 재생하던 곡은 자동으로 멈춤)
     fn play(&mut self, path: PathBuf) {
+        self.new_files.remove(&path);
         self.playing = None;
         match start_playing(path) {
             Ok(playing) => {
@@ -1353,6 +1369,13 @@ impl App {
 
                 for (index, path) in self.files.iter().enumerate() {
                     let video = is_video(path);
+                    let new = self.new_files.contains(path);
+                    // 깜빡이는 정도 (0.0 ~ 1.0)
+                    let glow = self
+                        .blink
+                        .as_mut()
+                        .filter(|blink| blink.paths.contains(path))
+                        .map_or(0.0, |blink| blink.strength(ui.input(|i| i.time)));
                     let missing = self.missing.contains(path);
                     // 이 파일이 재생 중이면 Some(일시정지 여부)
                     let current = self
@@ -1404,13 +1427,20 @@ impl App {
                             checked,
                             current: current.is_some(),
                             missing,
+                            new,
                         };
                         let hovered = hovered && !missing && moving.is_none();
                         let transform =
                             egui::emath::TSTransform::from_translation(egui::vec2(0.0, offset));
                         ui.with_visual_transform(transform, |ui| {
-                            file_card(ui, highlighted, hovered)
-                                .show(ui, |ui| row_content(ui, path, look));
+                            let mut card = file_card(ui, highlighted, hovered);
+                            if glow > 0.0 {
+                                let colors = theme::palette(ui);
+                                card.fill = card.fill.lerp_to_gamma(colors.tint(0.42), glow);
+                                card.stroke.color =
+                                    card.stroke.color.lerp_to_gamma(colors.point, glow);
+                            }
+                            card.show(ui, |ui| row_content(ui, path, look));
                         });
                         if dragged {
                             floating_row = Some((index, look));
@@ -1437,6 +1467,11 @@ impl App {
                         None => tr!("눌러서 재생", "Click to play"),
                     };
                     let response = row.response;
+                    if self.scroll_to.as_ref() == Some(path) {
+                        // 새로 추가한 첫 줄이 위로 오게. 뒤에 줄이 없으면 맨 아래까지
+                        response.scroll_to_me(Some(egui::Align::TOP));
+                        self.scroll_to = None;
+                    }
                     if checked.is_some()
                         && response.drag_started()
                         && let Some(pointer) = response.interact_pointer_pos()
@@ -1457,6 +1492,8 @@ impl App {
                         response.on_hover_text(hint)
                     };
                     if response.clicked() {
+                        // 눌러 본 줄은 더 이상 새 파일이 아님
+                        self.new_files.remove(path);
                         if checked.is_some() {
                             toggle_select = Some(path.clone());
                         } else if missing {
@@ -1507,6 +1544,13 @@ impl App {
                 }
             });
 
+        if let Some(blink) = &self.blink {
+            if blink.finished(ui.input(|i| i.time)) {
+                self.blink = None;
+            } else {
+                ui.ctx().request_repaint();
+            }
+        }
         if recheck {
             self.check_missing();
         }
@@ -1566,7 +1610,8 @@ impl App {
             return;
         };
 
-        let mut downloaded = Vec::new();
+        // 성공했으면 받은 파일들
+        let mut downloaded = None;
         // 그동안 쌓인 소식을 모두 처리
         self.status = loop {
             match job.receiver.try_recv() {
@@ -1584,10 +1629,9 @@ impl App {
                         ),
                     };
                 }
-                // 완료는 알림, 실패는 팝업으로 알려주기
+                // 완료는 목록에 표시하고, 실패는 팝업으로 알려주기
                 Ok(Update::Done(Ok(paths))) => {
-                    downloaded = paths.clone();
-                    self.toast = Some(Toast::saved(&paths, &self.folder));
+                    downloaded = Some(paths);
                     break String::new();
                 }
                 Ok(Update::Done(Err(reason))) => {
@@ -1608,7 +1652,20 @@ impl App {
         };
         self.job = None;
         // 받은 파일은 재생목록 맨 위에 추가
-        self.add_files(downloaded);
+        if let Some(paths) = downloaded
+            && self.add_files(paths.clone()) == 0
+        {
+            // 목록이 달라지지 않았으면 알림으로 알려주고, 해당 줄 보여주기
+            self.toast = Some(Toast::new(if paths.is_empty() {
+                tr!("저장 완료!", "Saved!")
+            } else {
+                tr!(
+                    "저장 완료! 이미 재생목록에 있는 파일이에요",
+                    "Saved! The file is already in the playlist",
+                )
+            }));
+            self.scroll_to = paths.into_iter().next();
+        }
     }
 }
 
@@ -1662,6 +1719,14 @@ impl eframe::App for App {
         };
         storage.set_string("repeat", repeat.to_string());
         storage.set_string("playlist", format_playlist(&self.files));
+        // 재생목록 순서로 저장
+        let new: Vec<PathBuf> = self
+            .files
+            .iter()
+            .filter(|path| self.new_files.contains(*path))
+            .cloned()
+            .collect();
+        storage.set_string("new", format_playlist(&new));
         let format = match self.format {
             Format::Mp3 => "mp3",
             Format::Mp4 => "mp4",
@@ -2172,6 +2237,8 @@ struct RowLook {
     // 재생 중인 파일인지
     current: bool,
     missing: bool,
+    // 새로 추가되어 아직 확인하지 않은 파일
+    new: bool,
 }
 
 // 목록 한 줄의 내용: 선택 표시, 확장자, 이름과 위치, 끌기 손잡이
@@ -2188,6 +2255,9 @@ fn row_content(ui: &mut egui::Ui, path: &Path, look: RowLook) {
         ui.with_layout(right_to_left, |ui| {
             if look.checked.is_some() {
                 icons::drag_handle(ui);
+            }
+            if look.new {
+                new_badge(ui);
             }
 
             // 파일 이름은 남은 공간에 왼쪽부터 표시
@@ -2216,6 +2286,22 @@ fn row_content(ui: &mut egui::Ui, path: &Path, look: RowLook) {
             });
         });
     });
+}
+
+// 새로 추가한 파일 표시
+fn new_badge(ui: &mut egui::Ui) {
+    let colors = theme::palette(ui);
+    egui::Frame::new()
+        .fill(colors.point)
+        .corner_radius(6)
+        .inner_margin(egui::Margin::symmetric(6, 1))
+        .show(ui, |ui| {
+            let text = egui::RichText::new("NEW")
+                .size(10.0)
+                .strong()
+                .color(colors.on_point);
+            ui.add(egui::Label::new(text).extend());
+        });
 }
 
 // 끌고 있는 줄을 다른 줄보다 위에, 그림자와 함께 그리기
@@ -2432,16 +2518,15 @@ fn parse_playlist(text: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-// 목록에 없는 파일만 순서대로 맨 앞에 넣고, 넣은 개수를 돌려주기
-fn add_to_front(files: &mut Vec<PathBuf>, paths: Vec<PathBuf>) -> usize {
+// 목록에 없는 파일만 순서대로 맨 뒤에 넣고, 넣은 파일들을 돌려주기
+fn add_to_end(files: &mut Vec<PathBuf>, paths: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut known: HashSet<PathBuf> = files.iter().cloned().collect();
     let new: Vec<PathBuf> = paths
         .into_iter()
         .filter(|path| known.insert(path.clone()))
         .collect();
-    let count = new.len();
-    files.splice(0..0, new);
-    count
+    files.extend(new.iter().cloned());
+    new
 }
 
 // 파일과 폴더들에서 음악과 동영상 파일 모으기. 폴더는 하위 폴더까지 이름순으로 찾음
@@ -2765,13 +2850,31 @@ mod tests {
     }
 
     #[test]
-    fn adds_only_new_files_to_front() {
+    fn adds_only_new_files_to_end() {
         let mut files = vec![PathBuf::from("old.mp3")];
         let new = ["a.mp3", "old.mp3", "b.mp3", "a.mp3"]
             .map(PathBuf::from)
             .to_vec();
-        assert_eq!(add_to_front(&mut files, new), 2);
-        assert_eq!(files, ["a.mp3", "b.mp3", "old.mp3"].map(PathBuf::from));
+        assert_eq!(
+            add_to_end(&mut files, new),
+            ["a.mp3", "b.mp3"].map(PathBuf::from)
+        );
+        assert_eq!(files, ["old.mp3", "a.mp3", "b.mp3"].map(PathBuf::from));
+    }
+
+    #[test]
+    fn blinks_three_times_then_stops() {
+        let mut blink = Blink {
+            paths: HashSet::new(),
+            since: None,
+        };
+        assert_eq!(blink.strength(10.0), 0.0);
+        for peak in [10.3, 10.9, 11.5] {
+            assert!(blink.strength(peak) > 0.99, "{peak}");
+        }
+        assert!(!blink.finished(11.7));
+        assert_eq!(blink.strength(11.85), 0.0);
+        assert!(blink.finished(11.85));
     }
 
     #[test]
