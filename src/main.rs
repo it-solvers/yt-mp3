@@ -190,7 +190,7 @@ struct App {
     files: Vec<PathBuf>,
     // 재생목록 중에서 지금은 찾을 수 없는 파일
     missing: HashSet<PathBuf>,
-    // 새로 추가되어 아직 확인하지 않은 파일 (NEW 표시)
+    // 이번 실행에서 추가되어 아직 확인하지 않은 파일 (NEW 표시)
     new_files: HashSet<PathBuf>,
     // 방금 추가한 줄을 깜빡이는 중이면 Some
     blink: Option<Blink>,
@@ -329,9 +329,8 @@ impl App {
             job: None,
             files: Vec::new(),
             missing: HashSet::new(),
-            new_files: saved("new")
-                .map(|text| parse_playlist(&text).into_iter().collect())
-                .unwrap_or_default(),
+            // NEW 표시는 저장하지 않으므로 켤 때는 없음
+            new_files: HashSet::new(),
             blink: None,
             scroll_to: None,
             playing: None,
@@ -361,7 +360,6 @@ impl App {
                 }
             }
         };
-        app.new_files.retain(|path| app.files.contains(path));
         app.check_missing();
         app
     }
@@ -1719,14 +1717,6 @@ impl eframe::App for App {
         };
         storage.set_string("repeat", repeat.to_string());
         storage.set_string("playlist", format_playlist(&self.files));
-        // 재생목록 순서로 저장
-        let new: Vec<PathBuf> = self
-            .files
-            .iter()
-            .filter(|path| self.new_files.contains(*path))
-            .cloned()
-            .collect();
-        storage.set_string("new", format_playlist(&new));
         let format = match self.format {
             Format::Mp3 => "mp3",
             Format::Mp4 => "mp4",
