@@ -4841,7 +4841,7 @@ dependencies = [
 
 [[package]]
 name = "yt-mp3"
-version = "1.0.72"
+version = "1.0.73"
 dependencies = [
  "chrono",
  "eframe",
@@ -4854,6 +4854,7 @@ dependencies = [
  "rustysynth",
  "sys-locale",
  "trash",
+ "winit",
 ]
 
 [[package]]

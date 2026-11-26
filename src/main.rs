@@ -38,6 +38,7 @@ fn main() -> eframe::Result {
             // 화면의 요소들이 겹치지 않는 최소 크기
             .with_min_inner_size([360.0, 480.0])
             .with_icon(icon),
+        event_loop_builder: window_system(),
         ..Default::default()
     };
 
@@ -91,6 +92,25 @@ fn simplify_app_menu() {
 // 다른 운영체제에는 이런 메뉴가 없음
 #[cfg(not(target_os = "macos"))]
 fn simplify_app_menu() {}
+
+// Ubuntu의 Wayland에서는 창 제목 줄의 한글이 깨지고 파일을 끌어다 놓을 수 없으므로,
+// X11 호환 방식(XWayland)을 쓸 수 있으면 사용
+#[cfg(target_os = "linux")]
+fn window_system() -> Option<eframe::EventLoopBuilderHook> {
+    use winit::platform::x11::EventLoopBuilderExtX11;
+
+    // DISPLAY가 없으면 X11을 쓸 수 없는 환경
+    std::env::var_os("DISPLAY")?;
+    Some(Box::new(|builder| {
+        builder.with_x11();
+    }))
+}
+
+// 다른 운영체제는 기본 방식 사용
+#[cfg(not(target_os = "linux"))]
+fn window_system() -> Option<eframe::EventLoopBuilderHook> {
+    None
+}
 
 // 프로그램에 포함한 앱 아이콘
 fn app_icon() -> egui::IconData {

@@ -1,6 +1,6 @@
 [package]
 name = "yt-mp3"
-version = "1.0.72"
+version = "1.0.73"
 edition = "2024"
 
 [dependencies]
@@ -22,3 +22,7 @@ opt-level = 3
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.2.2", features = ["NSApplication", "NSMenu", "NSMenuItem", "NSResponder"] }
 objc2-foundation = { version = "0.2.2", features = ["NSString"] }
+
+# Ubuntu에서 창을 만드는 방식을 고를 때 사용 (eframe이 이미 쓰는 library)
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30.13", default-features = false, features = ["x11"] }
