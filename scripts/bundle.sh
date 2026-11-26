@@ -82,7 +82,7 @@ localize() {
 STRINGS
 }
 localize en "JustGrab Player"
-localize ko "걍담아 플레이어"
+localize ko "모아모아 플레이어"
 
 # 이 Mac에서 쓰기 위한 임시(ad-hoc) 서명
 codesign --force --sign - "$app"

@@ -134,7 +134,7 @@ codesign --verify --strict "$app"
 ln -s /Applications "$stage/Applications"
 cat > "$stage/설치 안내 - Install Guide.txt" <<'GUIDE'
 설치 방법
-1. "JustGrab Player"(걍담아 플레이어)를 Applications 폴더로 끌어다 놓으세요.
+1. "JustGrab Player"(모아모아 플레이어)를 Applications 폴더로 끌어다 놓으세요.
 2. Applications 폴더에서 실행하세요.
 
 "열 수 없다"는 경고가 나올 때

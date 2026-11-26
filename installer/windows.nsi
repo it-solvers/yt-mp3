@@ -5,7 +5,7 @@ Unicode true
 !include "MUI2.nsh"
 
 !define NAME "JustGrab Player"
-!define NAME_KO "걍담아 플레이어"
+!define NAME_KO "모아모아 플레이어"
 ; 설치 폴더 이름. 이름이 바뀌어도 같은 폴더에 덮어 설치
 !define FOLDER "JustGrab"
 ; 이전에 쓰던 이름들. 이전 설치본을 정리할 때 사용
@@ -15,6 +15,7 @@ Unicode true
 !define OLD_NAME_DAMA "DamaDama"
 !define OLD_NAME_SHORT "JustGrab"
 !define OLD_NAME_SHORT_KO "걍담아"
+!define OLD_NAME_PLAYER_KO "걍담아 플레이어"
 !define PUBLISHER "ITSolvers(Hyeok Lee)"
 !define PUBLISHER_KO "아이티해결단(이혁)"
 ; 저작권자 표시
@@ -117,6 +118,8 @@ Section "Install"
     Delete "$DESKTOP\${OLD_NAME_SHORT}.lnk"
     Delete "$SMPROGRAMS\${OLD_NAME_SHORT_KO}.lnk"
     Delete "$DESKTOP\${OLD_NAME_SHORT_KO}.lnk"
+    Delete "$SMPROGRAMS\${OLD_NAME_PLAYER_KO}.lnk"
+    Delete "$DESKTOP\${OLD_NAME_PLAYER_KO}.lnk"
     ; 이전 version이 설치했던 폴더 정리
     !insertmacro RemoveFiles "$LOCALAPPDATA\Programs\${OLD_NAME}"
     !insertmacro RemoveFiles "$LOCALAPPDATA\Programs\${OLD_NAME_DAMA}"

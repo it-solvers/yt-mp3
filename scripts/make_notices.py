@@ -134,7 +134,7 @@ def main():
     args = parser.parse_args()
 
     document = (
-        "JustGrab Player (걍담아 플레이어) - THIRD-PARTY NOTICES / 오픈소스 라이선스\n\n"
+        "JustGrab Player (모아모아 플레이어) - THIRD-PARTY NOTICES / 오픈소스 라이선스\n\n"
         "This program includes or uses the open source software listed below.\n"
         "Each component remains under its own license.\n\n"
         "이 프로그램은 아래의 오픈소스 software를 포함하거나 사용합니다.\n"

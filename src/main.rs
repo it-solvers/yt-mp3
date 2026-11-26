@@ -99,7 +99,7 @@ fn app_icon() -> egui::IconData {
 }
 
 fn app_name() -> String {
-    tr!("걍담아 플레이어", "JustGrab Player")
+    tr!("모아모아 플레이어", "JustGrab Player")
 }
 
 // 정보창에 보여줄 저작권 정보
