@@ -83,6 +83,12 @@ fn section_title(ui: &mut egui::Ui, text: String) {
 
 // 저작권 안내와 개인정보 안내. 강조할 부분은 밝은 글자색으로 표시
 fn notices(ui: &mut egui::Ui) {
+    copyright_notice(ui);
+    ui.separator();
+    privacy_notice(ui);
+}
+
+fn copyright_notice(ui: &mut egui::Ui) {
     section_title(ui, tr!("저작권 안내", "Copyright"));
     notice_box(
         ui,
@@ -107,8 +113,9 @@ fn notices(ui: &mut egui::Ui) {
             ),
         ],
     );
+}
 
-    ui.separator();
+fn privacy_notice(ui: &mut egui::Ui) {
     section_title(ui, tr!("개인정보 안내", "Privacy"));
     notice_box(
         ui,
@@ -149,6 +156,17 @@ fn check_box(ui: &mut egui::Ui, checked: &mut bool, label: String) {
         }
         ui.checkbox(checked, text);
     });
+}
+
+// 동의한 때를 저장하는 모양
+const AGREED_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
+// 저장해 둔 동의한 때를 화면에 보여줄 모양으로. 읽을 수 없으면 그대로
+fn agreed_time(saved: &str) -> String {
+    match chrono::NaiveDateTime::parse_from_str(saved, AGREED_FORMAT) {
+        Ok(time) if lang::is_korean() => time.format("%Y년 %-m월 %-d일 %H시 %M분 %S초").to_string(),
+        _ => saved.to_string(),
+    }
 }
 
 // 안내 글 상자. parts의 홀수 번째(1, 3, ...) 글이 강조할 부분
@@ -291,6 +309,8 @@ struct App {
     showing_about: bool,
     // 저작권 안내를 다시 보지 않기로 했는지. 아니면 저장할 때마다 먼저 보여줌
     hide_notice: bool,
+    // 마지막으로 저작권 안내에 동의한 때 (AGREED_FORMAT 모양)
+    agreed_on: Option<String>,
     // 열려 있는 안내 팝업의 "다시 보지 않기" 선택
     hide_notice_checked: bool,
     // 저작권 안내 동의 팝업이 열려 있는지
@@ -458,6 +478,7 @@ impl App {
             format,
             language_chosen,
             hide_notice: saved("hide_notice").as_deref() == Some("true"),
+            agreed_on: saved("agreed_on").filter(|date| !date.is_empty()),
             hide_notice_checked: false,
             asking_consent: false,
             icon_texture: None,
@@ -548,7 +569,10 @@ impl App {
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 supported_sites(ui, true);
                 ui.separator();
-                notices(ui);
+                copyright_notice(ui);
+                self.agreement_state(ui);
+                ui.separator();
+                privacy_notice(ui);
             });
             ui.separator();
             ui.label(egui::RichText::new(copyright()).size(11.0).color(strong));
@@ -558,6 +582,28 @@ impl App {
                 self.open_licenses();
             }
         });
+    }
+
+    // 저작권 안내에 동의했는지 보여주기
+    fn agreement_state(&self, ui: &mut egui::Ui) {
+        let text = match &self.agreed_on {
+            Some(saved) => {
+                let time = agreed_time(saved);
+                tr!("✓ {time}에 동의함", "✓ Agreed on {time}")
+            }
+            // 날짜를 저장하기 전의 version에서 동의한 경우
+            None if self.hide_notice => tr!("✓ 동의함", "✓ Agreed"),
+            None => {
+                let text = tr!(
+                    "아직 동의하지 않음 (처음 저장할 때 물어봐요)",
+                    "Not agreed yet (you will be asked when you first save)",
+                );
+                ui.label(egui::RichText::new(text).weak());
+                return;
+            }
+        };
+        let color = ui.visuals().hyperlink_color;
+        ui.label(egui::RichText::new(text).color(color));
     }
 
     // 저장하기 전에 저작권 안내를 보여주고 동의받는 팝업
@@ -591,6 +637,7 @@ impl App {
         if agreed {
             // 선택은 동의했을 때만 기억
             self.hide_notice = checked;
+            self.agreed_on = Some(chrono::Local::now().format(AGREED_FORMAT).to_string());
             self.asking_consent = false;
             self.start_download(ui.ctx().clone());
         } else if closed {
@@ -2003,6 +2050,9 @@ impl eframe::App for App {
         };
         storage.set_string("format", format.to_string());
         storage.set_string("hide_notice", self.hide_notice.to_string());
+        if let Some(date) = &self.agreed_on {
+            storage.set_string("agreed_on", date.clone());
+        }
         if self.language_chosen {
             let language = if lang::is_korean() { "ko" } else { "en" };
             storage.set_string("language", language.to_string());
@@ -3274,6 +3324,18 @@ mod tests {
             Some(PathBuf::from("/music/노래 [id].mp3"))
         );
         assert_eq!(parse_existing("[download] Destination: /music/a.mp3"), None);
+    }
+
+    #[test]
+    fn shows_agreed_time() {
+        // 언어 설정은 다른 test와 함께 쓰므로 저장된 모양 그대로인 경우만 확인
+        assert_eq!(agreed_time("unknown"), "unknown");
+        let time =
+            chrono::NaiveDateTime::parse_from_str("2026-01-05 09:03:07", AGREED_FORMAT).unwrap();
+        assert_eq!(
+            time.format("%Y년 %-m월 %-d일 %H시 %M분 %S초").to_string(),
+            "2026년 1월 5일 09시 03분 07초"
+        );
     }
 
     #[test]
