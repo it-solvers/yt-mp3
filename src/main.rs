@@ -75,16 +75,88 @@ fn copyright() -> String {
 // 지원 사이트 안내창의 내용. 다운로드를 확인한 사이트만 적기
 const SITES: &str = "YouTube, Instagram, TikTok, X, Facebook, SoundCloud";
 
+// 팝업 안의 항목 제목
+fn section_title(ui: &mut egui::Ui, text: String) {
+    let color = ui.visuals().hyperlink_color;
+    ui.label(egui::RichText::new(text).size(15.0).strong().color(color));
+}
+
+// 저작권 안내와 개인정보 안내. 강조할 부분은 밝은 글자색으로 표시
+fn notices(ui: &mut egui::Ui) {
+    section_title(ui, tr!("저작권 안내", "Copyright"));
+    notice_box(
+        ui,
+        [
+            tr!(
+                "저작권자의 허락 없이 콘텐츠를 복제·배포·전송하는 행위는 ",
+                "Copying, distributing, or transmitting content without the copyright holder's permission ",
+            ),
+            tr!(
+                "저작권법에 위반되어 법적 책임을 질 수 있습니다.",
+                "may violate copyright law and lead to legal liability.",
+            ),
+            tr!(
+                " 권리를 가졌거나 이용을 허락받은 콘텐츠, 또는 법에서 허용하는 범위에서만 \
+                 내려받고 각 사이트의 이용약관을 지켜 주세요. ",
+                " Download only content you own or have permission to use, or as the law allows, \
+                 and follow each site's terms of service. ",
+            ),
+            tr!(
+                "내려받은 콘텐츠의 이용에 대한 모든 책임은 사용자에게 있습니다.",
+                "You are solely responsible for how you use downloaded content.",
+            ),
+        ],
+    );
+
+    ui.separator();
+    section_title(ui, tr!("개인정보 안내", "Privacy"));
+    notice_box(
+        ui,
+        [
+            tr!("본 프로그램은 ", "This program "),
+            tr!(
+                "어떠한 개인정보도 수집하거나 외부로 전송하지 않습니다.",
+                "does not collect or send any personal information.",
+            ),
+            tr!(
+                " 재생목록과 설정은 이 컴퓨터에만 저장됩니다. \
+                 다만 저장할 때에는 해당 영상 사이트에 접속합니다.",
+                " Your playlist and settings are stored only on this computer. \
+                 Saving a video does connect to that video's site.",
+            ),
+        ],
+    );
+}
+
+// 안내 글 상자. parts의 홀수 번째(1, 3, ...) 글이 강조할 부분
+fn notice_box<const N: usize>(ui: &mut egui::Ui, parts: [String; N]) {
+    let colors = theme::palette(ui);
+    egui::Frame::new()
+        .fill(colors.tint(0.16))
+        .corner_radius(8)
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let mut job = egui::text::LayoutJob::default();
+            for (index, part) in parts.iter().enumerate() {
+                let color = if index % 2 == 1 {
+                    ui.visuals().strong_text_color()
+                } else {
+                    colors.veil(0.7)
+                };
+                let format = egui::TextFormat::simple(font.clone(), color);
+                job.append(part, 0.0, format);
+            }
+            ui.add(egui::Label::new(job).wrap());
+        });
+}
+
 // 지원 사이트 목록. notes가 true면 주의할 점도 함께 보여줌
 fn supported_sites(ui: &mut egui::Ui, notes: bool) {
     let strong = ui.visuals().strong_text_color();
 
-    ui.label(
-        egui::RichText::new(tr!("지원 사이트", "Supported sites"))
-            .size(15.0)
-            .strong()
-            .color(ui.visuals().hyperlink_color),
-    );
+    section_title(ui, tr!("지원 사이트", "Supported sites"));
     ui.label(egui::RichText::new(SITES).color(strong));
     if notes {
         ui.label(
@@ -194,6 +266,10 @@ struct App {
     choosing_colors: bool,
     // 프로그램 정보 팝업이 열려 있는지
     showing_about: bool,
+    // 저작권 안내에 동의했는지. 동의하기 전에는 저장하기 전에 먼저 물어봄
+    agreed: bool,
+    // 저작권 안내 동의 팝업이 열려 있는지
+    asking_consent: bool,
     // 다운로드 중이면 Some, 아니면 None
     job: Option<Job>,
     // 재생목록. 파일은 원래 위치에 두고 경로만 기억
@@ -356,6 +432,8 @@ impl App {
             upcoming: Vec::new(),
             format,
             language_chosen,
+            agreed: saved("agreed").as_deref() == Some("true"),
+            asking_consent: false,
             icon_texture: None,
         };
         app.files = match saved("playlist") {
@@ -415,7 +493,7 @@ impl App {
         }
     }
 
-    // 정보 팝업의 내용: 아이콘, 이름, version, 지원 사이트, 저작권, 오픈소스 license
+    // 정보 팝업의 내용: 아이콘, 이름, version, 지원 사이트, 안내, 저작권, 오픈소스 license
     fn about(&mut self, ui: &mut egui::Ui) {
         let texture = self.icon_texture.get_or_insert_with(|| {
             let icon = app_icon();
@@ -443,6 +521,8 @@ impl App {
             ui.separator();
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 supported_sites(ui, true);
+                ui.separator();
+                notices(ui);
             });
             ui.separator();
             ui.label(egui::RichText::new(copyright()).size(11.0).color(strong));
@@ -452,6 +532,31 @@ impl App {
                 self.open_licenses();
             }
         });
+    }
+
+    // 처음 저장하기 전에 저작권 안내를 보여주고 동의받는 팝업
+    fn consent_dialog(&mut self, ui: &mut egui::Ui) {
+        if !self.asking_consent {
+            return;
+        }
+        let title = tr!("저장하기 전에 확인해 주세요", "Please read before saving");
+        let mut agreed = false;
+        let closed = dialog(ui, "consent", &title, notices, |ui| {
+            let colors = theme::palette(ui);
+            let label = tr!("동의하고 저장", "Agree and save");
+            let text = egui::RichText::new(label).strong().color(colors.on_point);
+            let button = egui::Button::new(text)
+                .fill(colors.point)
+                .min_size(egui::vec2(0.0, 30.0));
+            agreed = ui.add(button).clicked();
+        });
+        if agreed {
+            self.agreed = true;
+            self.asking_consent = false;
+            self.start_download(ui.ctx().clone());
+        } else if closed {
+            self.asking_consent = false;
+        }
     }
 
     // 창 아래쪽 가운데의 알림. 잠시 보인 뒤 흐려지며 사라짐.
@@ -1181,7 +1286,7 @@ impl App {
         clicked |= icons::primary_button(ui, Icon::Download, label, has_url, width).clicked();
 
         if clicked || (entered && has_url) {
-            self.start_download(ui.ctx().clone());
+            self.request_download(ui.ctx().clone());
         }
     }
 
@@ -1609,6 +1714,15 @@ impl App {
         }
     }
 
+    // 저장하기를 눌렀을 때. 안내에 동의한 적이 없으면 먼저 물어봄
+    fn request_download(&mut self, ctx: egui::Context) {
+        if self.agreed {
+            self.start_download(ctx);
+        } else {
+            self.asking_consent = true;
+        }
+    }
+
     // 별도 thread에서 다운로드 시작하기 (화면이 멈추지 않도록)
     fn start_download(&mut self, ctx: egui::Context) {
         let (sender, receiver) = mpsc::channel();
@@ -1771,6 +1885,7 @@ impl eframe::App for App {
             Format::Mp4 => "mp4",
         };
         storage.set_string("format", format.to_string());
+        storage.set_string("agreed", self.agreed.to_string());
         if self.language_chosen {
             let language = if lang::is_korean() { "ko" } else { "en" };
             storage.set_string("language", language.to_string());
@@ -1783,6 +1898,7 @@ impl eframe::App for App {
         self.about_dialog(ui);
         self.color_dialog(ui);
         self.failure_dialog(ui);
+        self.consent_dialog(ui);
         // 다른 팝업에서 생긴 오류도 보이도록 마지막에
         self.show_toast(ui);
         // 파일을 창 위로 끌어 오면 안내 보여주기
