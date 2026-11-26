@@ -152,7 +152,10 @@ impl Toast {
 
 // 목록에서 끌고 있는 줄
 struct Drag {
+    // 마우스로 잡은 줄
     path: PathBuf,
+    // 함께 옮기는 파일들. 잡은 줄도 포함
+    group: HashSet<PathBuf>,
     // 줄의 위쪽에서 마우스로 잡은 곳까지의 거리
     grab: f32,
     // 줄의 높이
@@ -1222,11 +1225,6 @@ impl App {
         self.remove_from_list(&removed);
     }
 
-    // 목록의 from 번째 파일을 to 번째 줄 앞으로 옮기기
-    fn move_file(&mut self, from: usize, to: usize) {
-        move_item(&mut self.files, from, to);
-    }
-
     // 편집 모드 시작. 목록을 고치는 동안에는 재생을 일시정지
     fn start_editing(&mut self) {
         if let Some(playing) = &self.playing {
@@ -1351,14 +1349,21 @@ impl App {
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = ROW_GAP;
 
-                // 끄는 중이면: (원래 번호, 지금 놓으면 갈 번호, 떠 있는 줄의 위치)
+                // 끄는 중이면: (옮기는 줄 번호들, 지금 놓으면 갈 자리, 떠 있는 줄의 위치)
                 let top = ui.cursor().top();
                 let moving = self.dragging.as_ref().and_then(|drag| {
-                    let from = self.files.iter().position(|path| path == &drag.path)?;
+                    let from: Vec<usize> = (0..self.files.len())
+                        .filter(|&i| drag.group.contains(&self.files[i]))
+                        .collect();
+                    if from.is_empty() {
+                        return None;
+                    }
                     let pointer = ui.ctx().pointer_latest_pos()?;
                     let step = drag.height + ROW_GAP;
                     let floating = pointer.y - drag.grab;
-                    let to = nearest_slot(floating - top, step, self.files.len());
+                    // 옮기지 않는 줄들 사이와 맨 앞, 맨 뒤가 놓을 수 있는 자리
+                    let slots = self.files.len() - from.len() + 1;
+                    let to = nearest_slot(floating - top, step, slots);
                     Some((from, to, floating))
                 });
                 let released = !ui.input(|i| i.pointer.primary_down());
@@ -1394,11 +1399,16 @@ impl App {
                         } else {
                             egui::Sense::click()
                         });
-                    let dragged = self.dragging.as_ref().is_some_and(|d| &d.path == path);
-                    // 끄는 줄이 지나가면 다른 줄은 한 칸 비켜 주기
-                    let shift = match (&self.dragging, moving) {
+                    let dragged = self
+                        .dragging
+                        .as_ref()
+                        .is_some_and(|d| d.group.contains(path));
+                    let lead = self.dragging.as_ref().is_some_and(|d| &d.path == path);
+                    // 끄는 줄이 지나가면 다른 줄은 비켜 주기
+                    let shift = match (&self.dragging, &moving) {
                         (Some(drag), Some((from, to, _))) if !dragged => {
-                            shift_slots(index, from, to) as f32 * (drag.height + ROW_GAP)
+                            let slot = drag_slot(index, from, *to);
+                            (slot as f32 - index as f32) * (drag.height + ROW_GAP)
                         }
                         _ => 0.0,
                     };
@@ -1440,7 +1450,7 @@ impl App {
                             }
                             card.show(ui, |ui| row_content(ui, path, look));
                         });
-                        if dragged {
+                        if lead {
                             floating_row = Some((index, look));
                         }
                     });
@@ -1476,8 +1486,14 @@ impl App {
                     {
                         // 누른 곳을 기준으로 해야 줄이 튀지 않음
                         let origin = ui.input(|i| i.pointer.press_origin());
+                        // 선택한 줄을 끌면 선택한 줄을 모두, 아니면 그 줄만
+                        let group = match &self.selected {
+                            Some(selected) if selected.contains(path) => selected.clone(),
+                            _ => HashSet::from([path.clone()]),
+                        };
                         self.dragging = Some(Drag {
                             path: path.clone(),
+                            group,
                             grab: origin.unwrap_or(pointer).y - response.rect.top(),
                             height: response.rect.height(),
                         });
@@ -1515,22 +1531,33 @@ impl App {
                             egui::pos2(ui.cursor().left(), floating),
                             egui::vec2(ui.available_width(), drag.height),
                         );
-                        floating_card(ui, rect, &self.files[index], look);
+                        floating_card(ui, rect, &self.files[index], look, from.len());
                     }
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
 
                     if released {
-                        let path = drag.path.clone();
-                        // 놓은 곳에서 새 자리까지 미끄러져 들어가게 하기
-                        let from_slot = floating - (top + to as f32 * step);
-                        // 다른 줄은 이미 새 자리에 보이므로 비킨 거리를 바로 없애기
-                        for other in &self.files {
+                        // 놓은 직후의 각 줄은 지금 보이던 곳에서 새 자리로 미끄러져 감
+                        let mut behind = 0;
+                        for (index, path) in self.files.iter().enumerate() {
+                            let offset = if let Ok(order) = from.binary_search(&index) {
+                                // 겹쳐 있던 모습에서 펼쳐지기
+                                let depth = if path == &drag.path {
+                                    0
+                                } else {
+                                    behind += 1;
+                                    behind.min(STACK_DEPTH)
+                                };
+                                let shown = floating + depth as f32 * STACK_OFFSET;
+                                shown - (top + (to + order) as f32 * step)
+                            } else {
+                                let shown = drag_slot(index, &from, to);
+                                let place = dropped_slot(index, &from, to);
+                                (shown as f32 - place as f32) * step
+                            };
                             ui.ctx()
-                                .animate_value_with_time(row_shift_id(other), 0.0, 0.0);
+                                .animate_value_with_time(row_shift_id(path), offset, 0.0);
                         }
-                        ui.ctx()
-                            .animate_value_with_time(row_shift_id(&path), from_slot, 0.0);
-                        self.move_file(from, to_insert_position(from, to));
+                        move_group(&mut self.files, &from, to);
                         ui.ctx().request_repaint();
                     } else if let Some(pointer) = ui.ctx().pointer_latest_pos() {
                         scroll_near_edge(ui, pointer.y);
@@ -2191,6 +2218,9 @@ fn drop_overlay(ui: &egui::Ui) {
 // 목록의 줄 사이 간격과, 줄이 비키는 데 걸리는 시간(초)
 const ROW_GAP: f32 = 6.0;
 const SLIDE_SECONDS: f32 = 0.18;
+// 여러 줄을 끌 때 뒤에 겹쳐 보이는 줄의 수와 어긋난 거리
+const STACK_DEPTH: usize = 2;
+const STACK_OFFSET: f32 = 5.0;
 
 // 줄을 비켜 그리는 거리를 부드럽게 바꿀 때 쓰는 이름
 fn row_shift_id(path: &Path) -> egui::Id {
@@ -2203,20 +2233,37 @@ fn nearest_slot(offset: f32, step: f32, count: usize) -> usize {
     slot.min(count.saturating_sub(1))
 }
 
-// from 번째 줄을 to 번째 자리로 옮길 때, index 번째 줄이 비켜야 하는 칸 수
-fn shift_slots(index: usize, from: usize, to: usize) -> i32 {
-    if from < index && index <= to {
-        -1
-    } else if to <= index && index < from {
-        1
-    } else {
-        0
-    }
+// 옮기는 줄들(from, 작은 번호부터)을 뺐을 때 index 번째 줄이 몇 번째인지
+fn rest_index(index: usize, from: &[usize]) -> usize {
+    index - from.partition_point(|&moving| moving < index)
 }
 
-// to 번째 자리에 놓으려면 move_item에 알려줄 "몇 번째 앞"
-fn to_insert_position(from: usize, to: usize) -> usize {
-    if to > from { to + 1 } else { to }
+// 끄는 중에 옮기지 않는 줄이 보이는 자리. to 번째에 한 칸을 비워 둠
+fn drag_slot(index: usize, from: &[usize], to: usize) -> usize {
+    let rest = rest_index(index, from);
+    if rest >= to { rest + 1 } else { rest }
+}
+
+// 놓은 뒤에 옮기지 않는 줄이 가는 자리. to 번째부터 옮긴 줄들이 들어감
+fn dropped_slot(index: usize, from: &[usize], to: usize) -> usize {
+    let rest = rest_index(index, from);
+    if rest >= to { rest + from.len() } else { rest }
+}
+
+// from의 항목들(작은 번호부터)을 원래 순서대로 붙여서, 나머지의 to 번째 앞에 넣기
+fn move_group<T>(items: &mut Vec<T>, from: &[usize], to: usize) {
+    let mut moved = Vec::new();
+    let mut rest = Vec::new();
+    for (index, item) in items.drain(..).enumerate() {
+        if from.binary_search(&index).is_ok() {
+            moved.push(item);
+        } else {
+            rest.push(item);
+        }
+    }
+    let to = to.min(rest.len());
+    rest.splice(to..to, moved);
+    *items = rest;
 }
 
 // 목록 한 줄의 모양을 정하는 값
@@ -2294,8 +2341,9 @@ fn new_badge(ui: &mut egui::Ui) {
         });
 }
 
-// 끌고 있는 줄을 다른 줄보다 위에, 그림자와 함께 그리기
-fn floating_card(ui: &mut egui::Ui, rect: egui::Rect, path: &Path, look: RowLook) {
+// 끌고 있는 줄을 다른 줄보다 위에, 그림자와 함께 그리기.
+// 여러 개(count)를 끌면 겹친 모양과 개수를 함께 표시
+fn floating_card(ui: &mut egui::Ui, rect: egui::Rect, path: &Path, look: RowLook, count: usize) {
     let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("floating-row"));
     let builder = egui::UiBuilder::new()
         .id_salt("floating-row")
@@ -2303,6 +2351,8 @@ fn floating_card(ui: &mut egui::Ui, rect: egui::Rect, path: &Path, look: RowLook
         .max_rect(rect);
     let mut floating = ui.new_child(builder);
     floating.style_mut().interaction.selectable_labels = false;
+    // 개수 표시가 줄 밖으로 조금 나가도 잘리지 않게 하기
+    floating.set_clip_rect(ui.clip_rect().expand(12.0));
 
     let shadow = egui::Shadow {
         offset: [0, 8],
@@ -2311,10 +2361,34 @@ fn floating_card(ui: &mut egui::Ui, rect: egui::Rect, path: &Path, look: RowLook
         color: egui::Color32::from_black_alpha(120),
     };
     let colors = theme::palette(ui);
-    file_card(&floating, true, false)
-        .fill(colors.tint(0.18))
-        .shadow(shadow)
+    let card = file_card(&floating, true, false).fill(colors.tint(0.18));
+    // 뒤에 겹친 줄은 아래에 있는 것부터 그리기
+    for depth in (1..count.min(STACK_DEPTH + 1)).rev() {
+        let behind = rect.translate(egui::vec2(0.0, depth as f32 * STACK_OFFSET));
+        floating.painter().rect(
+            behind,
+            card.corner_radius,
+            card.fill,
+            card.stroke,
+            egui::StrokeKind::Inside,
+        );
+    }
+    card.shadow(shadow)
         .show(&mut floating, |ui| row_content(ui, path, look));
+
+    if count > 1 {
+        let painter = floating.painter();
+        let text = painter.layout_no_wrap(
+            count.to_string(),
+            egui::FontId::proportional(12.0),
+            colors.on_point,
+        );
+        let size = egui::vec2((text.size().x + 12.0).max(22.0), 22.0);
+        let corner = rect.right_top() + egui::vec2(4.0, -9.0);
+        let badge = egui::Rect::from_min_size(corner - egui::vec2(size.x, 0.0), size);
+        painter.rect_filled(badge, 11.0, colors.point);
+        painter.galley(badge.center() - text.size() / 2.0, text, colors.on_point);
+    }
 }
 
 // 끄는 중에 목록의 위나 아래 끝에 가까워지면 자동으로 스크롤
@@ -2451,19 +2525,6 @@ fn list_media(folder: &Path) -> std::io::Result<Vec<PathBuf>> {
     });
 
     Ok(files)
-}
-
-// from 번째 항목을 to 번째 항목의 앞으로 옮기기. 순서가 달라지면 true
-fn move_item<T>(items: &mut Vec<T>, from: usize, to: usize) -> bool {
-    // 자기 앞이나 바로 뒤에 놓으면 그대로
-    if from >= items.len() || to == from || to == from + 1 {
-        return false;
-    }
-    let item = items.remove(from);
-    // 앞에서 하나를 빼면 뒤의 위치가 한 칸씩 당겨짐
-    let to = if to > from { to - 1 } else { to };
-    items.insert(to.min(items.len()), item);
-    true
 }
 
 // 최신순 파일 목록에 사용자가 정한 순서 적용하기.
@@ -2801,18 +2862,20 @@ mod tests {
     }
 
     #[test]
-    fn moves_items() {
-        let moved = |from, to| {
-            let mut items = vec!['a', 'b', 'c', 'd'];
-            let changed = move_item(&mut items, from, to);
-            (changed, items.into_iter().collect::<String>())
+    fn moves_items_together() {
+        let moved = |from: &[usize], to| {
+            let mut items = vec!['a', 'b', 'c', 'd', 'e'];
+            move_group(&mut items, from, to);
+            items.into_iter().collect::<String>()
         };
-        assert_eq!(moved(0, 4), (true, "bcda".into()));
-        assert_eq!(moved(3, 0), (true, "dabc".into()));
-        assert_eq!(moved(1, 3), (true, "acbd".into()));
-        assert_eq!(moved(1, 1), (false, "abcd".into()));
-        assert_eq!(moved(1, 2), (false, "abcd".into()));
-        assert_eq!(moved(9, 0), (false, "abcd".into()));
+        assert_eq!(moved(&[0], 4), "bcdea");
+        assert_eq!(moved(&[3], 0), "dabce");
+        assert_eq!(moved(&[2], 2), "abcde");
+        // 떨어져 있던 줄은 원래 순서대로 붙음
+        assert_eq!(moved(&[1, 3, 4], 0), "bdeac");
+        assert_eq!(moved(&[1, 3, 4], 1), "abdec");
+        assert_eq!(moved(&[1, 3, 4], 2), "acbde");
+        assert_eq!(moved(&[0, 1, 2, 3, 4], 0), "abcde");
     }
 
     #[test]
@@ -2895,23 +2958,29 @@ mod tests {
     }
 
     #[test]
-    fn rows_make_room_for_the_dragged_row() {
-        // 줄 0을 자리 2로: 1, 2번 줄이 한 칸 위로
-        let shifts = |from, to| (0..4).map(|i| shift_slots(i, from, to)).collect::<Vec<_>>();
-        assert_eq!(shifts(0, 2), [0, -1, -1, 0]);
-        assert_eq!(shifts(3, 1), [0, 1, 1, 0]);
-        assert_eq!(shifts(2, 2), [0, 0, 0, 0]);
+    fn rows_make_room_for_the_dragged_rows() {
+        // 줄 0을 자리 2로: 1, 2번 줄은 위로, 2번 자리는 비움
+        let slots = |from: &[usize], to| {
+            (0..5)
+                .filter(|i| !from.contains(i))
+                .map(|i| drag_slot(i, from, to))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(slots(&[0], 2), [0, 1, 3, 4]);
+        assert_eq!(slots(&[1, 3, 4], 1), [0, 2]);
 
         assert_eq!(nearest_slot(-40.0, 54.0, 4), 0);
         assert_eq!(nearest_slot(80.0, 54.0, 4), 1);
         assert_eq!(nearest_slot(900.0, 54.0, 4), 3);
 
-        // 자리 번호대로 옮겨지는지 확인
-        for from in 0..4 {
-            for to in 0..4 {
-                let mut items = vec![0, 1, 2, 3];
-                move_item(&mut items, from, to_insert_position(from, to));
-                assert_eq!(items[to], from, "{from} -> {to}");
+        // 놓은 뒤에 가는 자리는 실제 순서와 같아야 함
+        for from in [&[0][..], &[2], &[1, 3, 4], &[0, 4]] {
+            for to in 0..=5 - from.len() {
+                let mut items = vec![0, 1, 2, 3, 4];
+                move_group(&mut items, from, to);
+                for i in (0..5).filter(|i| !from.contains(i)) {
+                    assert_eq!(items[dropped_slot(i, from, to)], i, "{from:?} -> {to}");
+                }
             }
         }
     }
