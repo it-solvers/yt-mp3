@@ -3111,16 +3111,24 @@ fn unplayed(songs: &[PathBuf], history: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
+// 흐르는 제목이 elapsed일 때 왼쪽으로 움직인 거리. period만큼 움직이면 처음 모습.
+// 첫 글자를 읽을 수 있게 처음 몇 초는 멈춰 있음
+fn marquee_offset(elapsed: Duration, period: f32) -> f32 {
+    const WAIT: Duration = Duration::from_secs(3);
+    // 1초에 움직이는 거리
+    const SPEED: f32 = 40.0;
+    (elapsed.saturating_sub(WAIT).as_secs_f32() * SPEED) % period
+}
+
 // 옛날 MP3 플레이어처럼 글자를 왼쪽으로 반복해서 흘려 보내기.
-// elapsed는 흐르기 시작한 뒤 지난 시간
+// elapsed는 재생한 시간
 fn marquee(
     ui: &mut egui::Ui,
     text: &str,
     elapsed: Duration,
     background: impl Fn(egui::Pos2) -> egui::Color32,
 ) -> bool {
-    // 1초에 움직이는 거리와, 글자가 다시 나오기까지의 간격
-    const SPEED: f32 = 40.0;
+    // 글자가 다시 나오기까지의 간격
     const GAP: f32 = 60.0;
 
     let font = egui::TextStyle::Body.resolve(ui.style());
@@ -3140,7 +3148,7 @@ fn marquee(
     // 양끝에서 글자가 서서히 사라지는 폭
     const FADE: f32 = 24.0;
     let period = galley.size().x + GAP;
-    let offset = (elapsed.as_secs_f32() * SPEED) % period;
+    let offset = marquee_offset(elapsed, period);
 
     // 영역 밖으로 나간 부분은 잘라내기
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
@@ -3367,6 +3375,15 @@ mod tests {
             time.format("%Y년 %-m월 %-d일 %H시 %M분 %S초").to_string(),
             "2026년 1월 5일 09시 03분 07초"
         );
+    }
+
+    #[test]
+    fn title_waits_before_scrolling() {
+        let offset = |seconds| marquee_offset(Duration::from_secs_f32(seconds), 100.0);
+        assert_eq!(offset(0.0), 0.0);
+        assert_eq!(offset(3.0), 0.0);
+        assert_eq!(offset(4.0), 40.0);
+        assert_eq!(offset(6.0), 20.0);
     }
 
     #[test]
