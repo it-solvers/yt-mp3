@@ -4,8 +4,8 @@
 
 use crate::theme::palette;
 use eframe::egui::{
-    Color32, CornerRadius, CursorIcon, Painter, Pos2, Rect, Response, Role, Sense, Shape, Stroke,
-    Ui, Vec2, WidgetInfo, pos2, vec2,
+    Color32, CornerRadius, CursorIcon, Painter, Pos2, Rect, Response, Role, Sense, Shadow, Shape,
+    Stroke, Ui, Vec2, WidgetInfo, pos2, vec2,
 };
 
 #[derive(Clone, Copy)]
@@ -32,8 +32,6 @@ pub enum Icon {
     Palette,
     // 목록 편집
     Edit,
-    // 음표
-    Music,
 }
 
 // 아이콘 하나가 들어가는 버튼. label은 마우스를 올렸을 때 보여줄 설명
@@ -111,25 +109,47 @@ pub fn clear_button(ui: &mut Ui, rect: Rect, label: String) -> Response {
         .on_hover_text(label)
 }
 
-// 재생 영역의 큰 원형 버튼. rect 위치에 그림. 재생 중이면 강조색
+// 재생 영역의 큰 원형 버튼. rect 위치에 강조색으로 그리고 둘레에 빛을 번지게 함
 pub fn round_button(ui: &mut Ui, rect: Rect, icon: Icon, label: String) -> Response {
     let response = place(ui, rect, &label);
     let colors = palette(ui);
-    let hovered = response.hovered();
-    let (fill, glyph) = if matches!(icon, Icon::Pause) {
-        let amount = if hovered { 0.15 } else { 0.0 };
-        (
-            colors.point.lerp_to_gamma(colors.ink, amount),
-            colors.on_point,
-        )
-    } else {
-        let amount = if hovered { 0.22 } else { 0.13 };
-        (colors.veil(amount), colors.ink)
-    };
-    ui.painter()
-        .circle_filled(rect.center(), rect.width() / 2.0, fill);
-    paint(ui.painter(), rect.shrink(rect.width() * 0.31), icon, glyph);
+    let center = rect.center();
+    let radius = rect.width() / 2.0;
+    if ui.is_enabled() {
+        let glow = Shadow {
+            offset: [0, 6],
+            blur: 20,
+            spread: 0,
+            color: colors.point.gamma_multiply(0.45),
+        };
+        let corner = CornerRadius::same(radius as u8);
+        ui.painter().add(glow.as_shape(rect, corner));
+        ui.painter()
+            .circle_filled(center, radius + 5.0, colors.point.gamma_multiply(0.18));
+    }
+    let amount = if response.hovered() { 0.15 } else { 0.0 };
+    let fill = colors.point.lerp_to_gamma(colors.ink, amount);
+    ui.painter().circle_filled(center, radius, fill);
+    let glyph = rect.shrink(rect.width() * 0.31);
+    paint(ui.painter(), glyph, icon, colors.on_point);
     response.on_hover_text(label)
+}
+
+// 정해진 위치의 흐린 아이콘 버튼. 설명 대신 다른 것이 열리는 곳에 사용
+pub fn corner_button(ui: &mut Ui, rect: Rect, icon: Icon, label: String) -> Response {
+    let id = ui.scope_id().with("corner");
+    let response = ui.interact(rect, id, Sense::click());
+    describe(&response, ui, &label);
+    let colors = palette(ui);
+    let color = if response.hovered() {
+        ui.painter()
+            .circle_filled(rect.center(), rect.width() / 2.0, colors.veil(0.12));
+        colors.ink
+    } else {
+        colors.veil(0.55)
+    };
+    paint(ui.painter(), rect.shrink(7.0), icon, color);
+    response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
 // 배경 없는 버튼. 마우스를 올리면 옅은 원이 보임. 켜진 기능은 강조색
@@ -189,43 +209,11 @@ pub fn drag_handle(ui: &mut Ui) {
     }
 }
 
-// 배경 없는 작은 버튼. 마우스를 올리면 옅은 원이 보임
-pub fn ghost_button(ui: &mut Ui, icon: Icon, label: String) -> Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
-    describe(&response, ui, &label);
-
-    if ui.is_rect_visible(rect) {
-        let colors = palette(ui);
-        let color = if response.hovered() {
-            ui.painter()
-                .circle_filled(rect.center(), rect.width() / 2.0, colors.veil(0.12));
-            colors.ink
-        } else {
-            colors.shade(0.55)
-        };
-        paint(ui.painter(), rect.shrink(6.0), icon, color);
-    }
-
-    response
-        .on_hover_cursor(CursorIcon::PointingHand)
-        .on_hover_text(label)
-}
-
 // 다른 버튼 안에 넣는 그림. 설명이나 반응 없이 글자색으로 그림
 pub fn symbol(ui: &mut Ui, icon: Icon) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
     let color = palette(ui).ink;
     paint(ui.painter(), rect.shrink(1.0), icon, color);
-}
-
-// 설명용 그림 (누를 수 없음). 배경 없이 그려서 버튼과 구별
-pub fn picture(ui: &mut Ui, icon: Icon, label: String) -> Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
-    if ui.is_rect_visible(rect) {
-        let colors = palette(ui);
-        paint(ui.painter(), rect.shrink(6.0), icon, colors.shade(0.55));
-    }
-    response.on_hover_text(label)
 }
 
 // 아이콘과 글자가 함께 있는 강조 버튼
@@ -431,22 +419,6 @@ fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 painter.circle_filled(at(x, y), rect.width() * 0.09, color);
             }
             painter.circle_filled(at(0.58, 0.72), rect.width() * 0.15, color);
-        }
-        Icon::Music => {
-            // 두 음표를 잇는 막대, 기둥, 머리
-            fill(
-                vec![
-                    at(0.28, 0.14),
-                    at(0.96, 0.00),
-                    at(0.96, 0.24),
-                    at(0.28, 0.38),
-                ],
-                color,
-            );
-            block(0.28, 0.20, 0.40, 0.82, 0);
-            block(0.84, 0.10, 0.96, 0.72, 0);
-            painter.circle_filled(at(0.22, 0.82), rect.width() * 0.18, color);
-            painter.circle_filled(at(0.78, 0.72), rect.width() * 0.18, color);
         }
     }
 }

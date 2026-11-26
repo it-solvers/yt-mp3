@@ -5,6 +5,7 @@
 #[macro_use]
 mod lang;
 
+mod glow;
 mod icons;
 mod midi;
 mod theme;
@@ -295,8 +296,10 @@ struct Saved {
     existed: bool,
 }
 
-// 재생 영역의 내용 높이 (제목 20 + 곡 정보 28 + 재생 버튼 52 + 탐색 bar 18 + 간격)
-const PLAYER_HEIGHT: f32 = 127.0;
+// 재생 영역의 내용 높이 (제목 20 + 곡 순서 15 + 간격 8 + 재생 버튼 52 + 간격 4 + 탐색 bar 14)
+const PLAYER_HEIGHT: f32 = 113.0;
+// 마우스가 벗어난 뒤에 음량 막대를 닫기까지의 시간(초). 버튼에서 막대로 옮겨 갈 시간
+const VOLUME_LINGER: f64 = 0.25;
 
 // 화면이 기억해야 하는 값들
 struct App {
@@ -345,6 +348,8 @@ struct App {
     volume: f32,
     // 음소거를 풀 때 돌아갈 음량
     unmuted: f32,
+    // 음량 막대를 열어 두는 마지막 시각. 닫혀 있으면 None
+    volume_open_until: Option<f64>,
     repeat: Repeat,
     // 다음 곡을 무작위로 고를지
     shuffle: bool,
@@ -476,6 +481,7 @@ impl App {
             dragging: None,
             volume,
             unmuted,
+            volume_open_until: None,
             repeat,
             // 섞기는 저장하지 않고, 켤 때마다 목록 순서대로 시작
             shuffle: false,
@@ -1101,74 +1107,126 @@ impl App {
         }
     }
 
-    // 재생 영역의 첫 줄: 전체 폭을 쓰는 곡 제목
-    fn track_title(&mut self, ui: &mut egui::Ui) {
+    // 재생 영역의 첫 줄: 가운데의 곡 제목. 오른쪽 모서리의 음량 버튼과 겹치지 않게 양옆을 비움
+    fn track_title(&mut self, ui: &mut egui::Ui, background: glow::Glow) {
         let size = egui::vec2(ui.available_width(), 20.0);
+        let (row, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        let area = row.shrink2(egui::vec2(34.0, 0.0));
+        let layout = egui::Layout::top_down(egui::Align::Center);
+        let builder = egui::UiBuilder::new().max_rect(area).layout(layout);
+        let mut ui = ui.new_child(builder);
+        let Some(playing) = &self.playing else {
+            let hint = tr!("재생할 곡을 선택하세요", "Select a track to play");
+            ui.add(egui::Label::new(egui::RichText::new(hint).weak()).truncate());
+            return;
+        };
+        // 재생 위치에 맞춰 움직이므로 일시정지하면 함께 멈춤
+        let title = file_name(&playing.path);
+        let position = playing.player.get_pos();
+        marquee(&mut ui, &title, position, |at| background.color_at(at));
+        if !playing.player.is_paused() {
+            // 부드럽게 흐르도록 자주 다시 그리기
+            ui.ctx().request_repaint_after(Duration::from_millis(33));
+        }
+    }
+
+    // 재생 영역의 둘째 줄: 소리 파일 중 몇 번째인지. 재생 전에는 곡의 수
+    fn track_number(&self, ui: &mut egui::Ui) {
+        let songs = self.songs();
+        let current = self
+            .playing
+            .as_ref()
+            .and_then(|playing| songs.iter().position(|p| p == &playing.path));
+        let count = songs.len();
+        let text = match current {
+            Some(index) => format!("{} / {count}", index + 1),
+            None => tr!("{count}곡", "{count} songs"),
+        };
+        let size = egui::vec2(ui.available_width(), 15.0);
         let layout = egui::Layout::top_down(egui::Align::Center);
         ui.allocate_ui_with_layout(size, layout, |ui| {
             ui.set_min_size(size);
-            let Some(playing) = &self.playing else {
-                let hint = tr!("재생할 곡을 선택하세요", "Select a track to play");
-                ui.add(egui::Label::new(egui::RichText::new(hint).weak()).truncate());
-                return;
-            };
-            // 재생 위치에 맞춰 움직이므로 일시정지하면 함께 멈춤
-            marquee(ui, &file_name(&playing.path), playing.player.get_pos());
-            if !playing.player.is_paused() {
-                // 부드럽게 흐르도록 자주 다시 그리기
-                ui.ctx().request_repaint_after(Duration::from_millis(33));
-            }
+            ui.label(egui::RichText::new(text).size(11.0).weak());
         });
     }
 
-    // 재생 영역의 둘째 줄: 음표, 곡 순서, 음량
-    fn track_info(&mut self, ui: &mut egui::Ui) {
-        let row = egui::vec2(ui.available_width(), 28.0);
-        let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
-        ui.allocate_ui_with_layout(row, right_to_left, |ui| {
-            ui.scope(|ui| {
-                ui.spacing_mut().slider_width = 70.0;
-                // 손잡이가 너무 커지지 않도록 slider는 낮게
-                ui.spacing_mut().interact_size.y = 18.0;
-                let percent = self.volume * 100.0;
-                let before = self.volume;
-                let slider = egui::Slider::new(&mut self.volume, 0.0..=1.0)
-                    .show_value(false)
-                    .trailing_fill(true);
-                // 음량은 곡을 고르기 전에도 조절할 수 있음
-                let response = ui.add(slider).on_hover_text(format!("{percent:.0}%"));
-                // slider로 0까지 내려도 스피커를 눌러 되돌릴 수 있게 이전 음량 기억
-                let silenced = response.clicked() && self.volume == 0.0;
-                if (response.drag_started() || silenced) && before > 0.0 {
-                    self.unmuted = before;
-                }
-                if response.changed() {
-                    self.apply_volume();
-                }
-            });
-            // 스피커를 누르면 음소거, 다시 누르면 이전 음량
-            let (icon, hint) = if self.volume > 0.0 {
-                (Icon::Speaker, tr!("음소거", "Mute"))
-            } else {
-                (Icon::Muted, tr!("음소거 해제", "Unmute"))
-            };
-            if icons::ghost_button(ui, icon, hint).clicked() {
-                self.toggle_mute();
-            }
+    // 오른쪽 위의 음량 버튼. 누르면 음소거하거나 되돌리고,
+    // 마우스를 올리면 아래로 음량 막대가 열림
+    fn volume_control(&mut self, ui: &mut egui::Ui, card: egui::Rect) {
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(card.right() - 44.0, card.top() + 9.0),
+            egui::Vec2::splat(32.0),
+        );
+        // 음량은 곡을 고르기 전에도 조절할 수 있음
+        let (icon, label) = if self.volume > 0.0 {
+            (Icon::Speaker, tr!("음소거", "Mute"))
+        } else {
+            (Icon::Muted, tr!("음소거 해제", "Unmute"))
+        };
+        let button = icons::corner_button(ui, rect, icon, label);
+        if button.clicked() {
+            self.toggle_mute();
+        }
 
-            let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
-            ui.with_layout(left_to_right, |ui| {
-                icons::picture(ui, Icon::Music, tr!("재생 중인 곡", "Now playing"));
-                // 소리 파일 중 몇 번째인지
-                if let Some(playing) = &self.playing {
-                    let songs = self.songs();
-                    if let Some(index) = songs.iter().position(|p| p == &playing.path) {
-                        let number = format!("{} / {}", index + 1, songs.len());
-                        ui.label(egui::RichText::new(number).weak());
-                    }
-                }
+        let now = ui.input(|i| i.time);
+        let open = self.volume_open_until.is_some_and(|until| now < until);
+        if !(open || button.hovered() || button.has_focus()) {
+            self.volume_open_until = None;
+            return;
+        }
+
+        let colors = theme::palette(ui);
+        let area = egui::Area::new(egui::Id::unique("volume"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(rect.center().x - 20.0, rect.bottom() + 4.0))
+            .show(ui.ctx(), |ui| {
+                let frame = egui::Frame::new()
+                    .fill(colors.shade(0.13))
+                    .stroke(egui::Stroke::new(1.0, colors.shade(0.22)))
+                    .corner_radius(20)
+                    .shadow(egui::Shadow {
+                        offset: [0, 8],
+                        blur: 20,
+                        spread: 0,
+                        color: egui::Color32::from_black_alpha(110),
+                    })
+                    .inner_margin(egui::Margin::symmetric(0, 10));
+                let shown = frame.show(ui, |ui| {
+                    ui.set_width(38.0);
+                    ui.vertical_centered(|ui| self.volume_slider(ui)).inner
+                });
+                shown.inner
             });
+
+        // 버튼이나 막대 위에 있거나 끄는 동안에는 열어 두기
+        let dragging = area.inner;
+        let over = ui.input(|i| i.pointer.hover_pos()).is_some_and(|pointer| {
+            // 버튼과 막대 사이의 틈도 포함
+            rect.union(area.response.rect).contains(pointer)
         });
+        if button.hovered() || button.has_focus() || over || dragging {
+            self.volume_open_until = Some(now + VOLUME_LINGER);
+        }
+        ui.ctx()
+            .request_repaint_after(Duration::from_secs_f64(VOLUME_LINGER));
+    }
+
+    // 세로 음량 막대와 크기 표시. 막대를 끄는 중이면 true
+    fn volume_slider(&mut self, ui: &mut egui::Ui) -> bool {
+        let before = self.volume;
+        let label = tr!("음량", "Volume");
+        let slider = glow::slider(ui, &mut self.volume, 1.0, 88.0, true, &label);
+        // 0까지 내려도 스피커를 눌러 되돌릴 수 있게 이전 음량 기억
+        let silenced = slider.clicked() && self.volume == 0.0;
+        if (slider.drag_started() || silenced) && before > 0.0 {
+            self.unmuted = before;
+        }
+        if slider.changed() {
+            self.apply_volume();
+        }
+        let percent = format!("{:.0}%", self.volume * 100.0);
+        ui.label(egui::RichText::new(percent).size(10.0).weak());
+        slider.dragged()
     }
 
     // 재생 영역의 가운데 줄: 반복, 이전 곡, 재생/일시정지, 다음 곡, 섞기
@@ -1222,7 +1280,7 @@ impl App {
         ui.add_enabled_ui(active, |ui| {
             let hint = tr!("이전 곡", "Previous");
             previous =
-                icons::flat_button(ui, at(-76.0, 40.0), Icon::Previous, true, hint).clicked();
+                icons::flat_button(ui, at(-66.0, 38.0), Icon::Previous, true, hint).clicked();
 
             let (icon, hint) = if playing_now {
                 (Icon::Pause, tr!("일시정지", "Pause"))
@@ -1231,10 +1289,10 @@ impl App {
             } else {
                 (Icon::Play, tr!("재생", "Play"))
             };
-            toggle = icons::round_button(ui, at(0.0, 52.0), icon, hint).clicked();
+            toggle = icons::round_button(ui, at(0.0, 50.0), icon, hint).clicked();
 
             let hint = tr!("다음 곡", "Next");
-            next = icons::flat_button(ui, at(76.0, 40.0), Icon::Next, true, hint).clicked();
+            next = icons::flat_button(ui, at(66.0, 38.0), Icon::Next, true, hint).clicked();
         });
 
         if toggle && let Some(playing) = &self.playing {
@@ -1254,16 +1312,13 @@ impl App {
 
     // 목록 위의 재생 영역: 위에서부터 곡 정보, 재생 버튼, 탐색 bar.
     // 재생 중인 곡이 없어도 같은 모양을 보여주고, 재생 조작만 비활성화
-    fn player_bar(&mut self, ui: &mut egui::Ui) {
-        // slider의 채워진 부분은 진한 강조색, 빈 부분은 바탕과 구별되는 색
-        let colors = theme::palette(ui);
-        ui.visuals_mut().selection.bg_fill = colors.point;
-        // 손잡이에도 쓰이는 색이므로 불투명하게
-        ui.visuals_mut().widgets.inactive.bg_fill = colors.edge.lerp_to_gamma(colors.ink, 0.2);
-
-        self.track_title(ui);
-        self.track_info(ui);
+    fn player_bar(&mut self, ui: &mut egui::Ui, background: glow::Glow) {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        self.track_title(ui, background);
+        self.track_number(ui);
+        ui.add_space(8.0);
         self.transport(ui);
+        ui.add_space(4.0);
 
         // 현재 위치, 전체 길이, 끄는 중인 위치
         let (position, total, seeking) = match &self.playing {
@@ -1278,22 +1333,28 @@ impl App {
             seconds = seconds.min(total_secs);
         }
 
-        ui.spacing_mut().interact_size.y = 18.0;
-        ui.horizontal(|ui| {
-            ui.label(format_time(Duration::from_secs_f32(seconds)));
+        let time = |time: Duration| egui::RichText::new(format_time(time)).size(11.0).weak();
+        let size = egui::vec2(ui.available_width(), 14.0);
+        let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
+        ui.allocate_ui_with_layout(size, left_to_right, |ui| {
+            ui.spacing_mut().interact_size.y = 14.0;
+            ui.label(time(Duration::from_secs_f32(seconds)));
 
             let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
             ui.with_layout(right_to_left, |ui| {
-                ui.label(format_time(total.unwrap_or_default()));
+                ui.label(time(total.unwrap_or_default()));
 
                 // 두 시간 표시 사이를 탐색 bar로 채우기
-                ui.spacing_mut().slider_width = ui.available_width();
-                // 길이가 0인 slider는 만들 수 없으므로 최소 1초로
+                let width = ui.available_width();
                 let mut bar = seconds;
-                let slider = egui::Slider::new(&mut bar, 0.0..=total_secs.max(1.0))
-                    .show_value(false)
-                    .trailing_fill(true);
-                let slider = ui.add_enabled(total.is_some(), slider);
+                let label = tr!("재생 위치", "Position");
+                let slider = ui
+                    .add_enabled_ui(total.is_some(), |ui| {
+                        // 길이가 0인 slider는 만들 수 없으므로 최소 1초로
+                        let max = total_secs.max(1.0);
+                        glow::slider(ui, &mut bar, max, width, false, &label)
+                    })
+                    .inner;
 
                 let Some(playing) = &mut self.playing else {
                     return;
@@ -1313,6 +1374,29 @@ impl App {
                 }
             });
         });
+    }
+
+    // 빛이 번지는 바탕 위에 재생 영역을 그리고, 오른쪽 위에 음량 버튼 두기
+    fn player_card(&mut self, ui: &mut egui::Ui) {
+        // 위아래와 좌우의 안쪽 여백
+        const TOP: f32 = 12.0;
+        const BOTTOM: f32 = 10.0;
+        const SIDE: f32 = 16.0;
+        let size = egui::vec2(ui.available_width(), TOP + PLAYER_HEIGHT + BOTTOM);
+        let (card, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        let colors = theme::palette(ui);
+        let background = glow::Glow::new(card, colors);
+        let shape = background.shape(colors.shade(0.13));
+        ui.painter().add(shape);
+
+        let inner = egui::Rect::from_min_max(
+            card.min + egui::vec2(SIDE, TOP),
+            card.max - egui::vec2(SIDE, BOTTOM),
+        );
+        let mut content = ui.new_child(egui::UiBuilder::new().max_rect(inner));
+        self.player_bar(&mut content, background);
+        // 제목보다 위에 놓이도록 마지막에
+        self.volume_control(ui, card);
     }
 
     // 함께 설치한 오픈소스 license 문서 열기
@@ -2071,11 +2155,7 @@ impl eframe::App for App {
 
             ui.separator();
             // 재생 영역은 항상 보여줘서, 재생을 시작해도 목록이 움직이지 않게 하기
-            player_frame(ui).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.set_height(PLAYER_HEIGHT);
-                self.player_bar(ui);
-            });
+            self.player_card(ui);
             ui.add_space(4.0);
             self.file_list(ui);
         });
@@ -2274,14 +2354,6 @@ fn tool_path() -> OsString {
     folders.push(PathBuf::from("/usr/local/bin"));
 
     std::env::join_paths(folders).unwrap_or(current)
-}
-
-// 재생 영역의 틀. 헤더와 같은 바탕색의 둥근 카드
-fn player_frame(ui: &egui::Ui) -> egui::Frame {
-    egui::Frame::new()
-        .fill(theme::palette(ui).edge)
-        .corner_radius(12)
-        .inner_margin(egui::Margin::symmetric(10, 8))
 }
 
 // 헤더의 틀. 본문과 구별되는 바탕색 사용
@@ -3067,7 +3139,12 @@ fn unplayed(songs: &[PathBuf], history: &[PathBuf]) -> Vec<PathBuf> {
 
 // 옛날 MP3 플레이어처럼 글자를 왼쪽으로 반복해서 흘려 보내기.
 // elapsed는 흐르기 시작한 뒤 지난 시간
-fn marquee(ui: &mut egui::Ui, text: &str, elapsed: Duration) {
+fn marquee(
+    ui: &mut egui::Ui,
+    text: &str,
+    elapsed: Duration,
+    background: impl Fn(egui::Pos2) -> egui::Color32,
+) {
     // 1초에 움직이는 거리와, 글자가 다시 나오기까지의 간격
     const SPEED: f32 = 40.0;
     const GAP: f32 = 60.0;
@@ -3093,9 +3170,8 @@ fn marquee(ui: &mut egui::Ui, text: &str, elapsed: Duration) {
     }
 
     // 글자가 뚝 잘려 보이지 않게 양끝을 바탕색으로 흐리게 덮기
-    let background = theme::palette(ui).edge;
-    fade(&painter, rect, FADE, background, true);
-    fade(&painter, rect, FADE, background, false);
+    fade(&painter, rect, FADE, &background, true);
+    fade(&painter, rect, FADE, &background, false);
 
     // 마우스를 올리면 전체 제목 보여주기
     response.on_hover_text(text);
@@ -3106,7 +3182,7 @@ fn fade(
     painter: &egui::Painter,
     rect: egui::Rect,
     width: f32,
-    background: egui::Color32,
+    background: &impl Fn(egui::Pos2) -> egui::Color32,
     left: bool,
 ) {
     let (outer, inner) = if left {
@@ -3115,9 +3191,11 @@ fn fade(
         (rect.right(), rect.right() - width)
     };
     let mut mesh = egui::Mesh::default();
-    for (x, color) in [(outer, background), (inner, egui::Color32::TRANSPARENT)] {
-        mesh.colored_vertex(egui::pos2(x, rect.top()), color);
-        mesh.colored_vertex(egui::pos2(x, rect.bottom()), color);
+    for (x, opacity) in [(outer, 1.0), (inner, 0.0)] {
+        for y in [rect.top(), rect.bottom()] {
+            let at = egui::pos2(x, y);
+            mesh.colored_vertex(at, background(at).gamma_multiply(opacity));
+        }
     }
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(1, 2, 3);
