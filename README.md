@@ -5,6 +5,8 @@ Mac, Windows, Ubuntu에서 사용합니다. 화면은 시스템 언어에 따라
 
 설명서: <https://itsolvers.co.kr/insights/justgrab-player>
 
+> 이 앱은 [Claude Code](https://claude.com/claude-code)로 **100% 개발한 바이브 코딩(vibe coding)** 프로젝트입니다.
+
 ## 주요 기능
 
 - **저장**: 영상 주소를 붙여넣어 소리(MP3) 또는 영상(MP4)으로 저장
