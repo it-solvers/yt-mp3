@@ -296,8 +296,11 @@ struct Saved {
     existed: bool,
 }
 
-// 재생 영역의 내용 높이 (제목 20 + 곡 순서 15 + 간격 8 + 재생 버튼 52 + 간격 4 + 탐색 bar 14)
-const PLAYER_HEIGHT: f32 = 113.0;
+// 재생 영역의 내용 높이 (제목 32 + 간격 8 + 재생 버튼 52 + 간격 4 + 탐색 bar 14)
+const PLAYER_HEIGHT: f32 = 110.0;
+// 재생 영역의 위쪽 여백과, 제목과 음량 버튼이 함께 놓이는 첫 줄의 높이
+const PLAYER_TOP: f32 = 9.0;
+const TITLE_ROW: f32 = 32.0;
 // 마우스가 벗어난 뒤에 음량 막대를 닫기까지의 시간(초). 버튼에서 막대로 옮겨 갈 시간
 const VOLUME_LINGER: f64 = 0.25;
 
@@ -955,15 +958,6 @@ impl App {
         self.play(path);
     }
 
-    // 재생할 수 있는 소리 파일 (동영상과 찾을 수 없는 파일 제외)
-    fn songs(&self) -> Vec<PathBuf> {
-        self.files
-            .iter()
-            .filter(|path| !is_video(path) && !self.missing.contains(*path))
-            .cloned()
-            .collect()
-    }
-
     // current의 앞뒤 곡을 고를 때 쓰는 목록. 재생하지 못한 곡(skipped)은 빼고,
     // current는 그 사이에 지워졌어도 위치를 알 수 있게 남겨 둠
     fn songs_around(&self, current: &Path, skipped: &HashSet<PathBuf>) -> Vec<PathBuf> {
@@ -1107,11 +1101,13 @@ impl App {
         }
     }
 
-    // 재생 영역의 첫 줄: 가운데의 곡 제목. 오른쪽 모서리의 음량 버튼과 겹치지 않게 양옆을 비움
+    // 재생 영역의 첫 줄: 가운데의 곡 제목. 오른쪽의 음량 버튼과 겹치지 않게 양옆을 비움
     fn track_title(&mut self, ui: &mut egui::Ui, background: glow::Glow) {
-        let size = egui::vec2(ui.available_width(), 20.0);
+        let size = egui::vec2(ui.available_width(), TITLE_ROW);
         let (row, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-        let area = row.shrink2(egui::vec2(34.0, 0.0));
+        // 글자의 가운데가 음량 버튼의 가운데와 같은 높이가 되게 하기
+        let line = ui.text_style_height(&egui::TextStyle::Body);
+        let area = egui::Rect::from_center_size(row.center(), egui::vec2(row.width() - 68.0, line));
         let layout = egui::Layout::top_down(egui::Align::Center);
         let builder = egui::UiBuilder::new().max_rect(area).layout(layout);
         let mut ui = ui.new_child(builder);
@@ -1130,32 +1126,12 @@ impl App {
         }
     }
 
-    // 재생 영역의 둘째 줄: 소리 파일 중 몇 번째인지. 재생 전에는 곡의 수
-    fn track_number(&self, ui: &mut egui::Ui) {
-        let songs = self.songs();
-        let current = self
-            .playing
-            .as_ref()
-            .and_then(|playing| songs.iter().position(|p| p == &playing.path));
-        let count = songs.len();
-        let text = match current {
-            Some(index) => format!("{} / {count}", index + 1),
-            None => tr!("{count}곡", "{count} songs"),
-        };
-        let size = egui::vec2(ui.available_width(), 15.0);
-        let layout = egui::Layout::top_down(egui::Align::Center);
-        ui.allocate_ui_with_layout(size, layout, |ui| {
-            ui.set_min_size(size);
-            ui.label(egui::RichText::new(text).size(11.0).weak());
-        });
-    }
-
     // 오른쪽 위의 음량 버튼. 누르면 음소거하거나 되돌리고,
     // 마우스를 올리면 아래로 음량 막대가 열림
     fn volume_control(&mut self, ui: &mut egui::Ui, card: egui::Rect) {
         let rect = egui::Rect::from_min_size(
-            egui::pos2(card.right() - 44.0, card.top() + 9.0),
-            egui::Vec2::splat(32.0),
+            egui::pos2(card.right() - 44.0, card.top() + PLAYER_TOP),
+            egui::Vec2::splat(TITLE_ROW),
         );
         // 음량은 곡을 고르기 전에도 조절할 수 있음
         let (icon, label) = if self.volume > 0.0 {
@@ -1315,7 +1291,6 @@ impl App {
     fn player_bar(&mut self, ui: &mut egui::Ui, background: glow::Glow) {
         ui.spacing_mut().item_spacing.y = 0.0;
         self.track_title(ui, background);
-        self.track_number(ui);
         ui.add_space(8.0);
         self.transport(ui);
         ui.add_space(4.0);
@@ -1379,10 +1354,9 @@ impl App {
     // 빛이 번지는 바탕 위에 재생 영역을 그리고, 오른쪽 위에 음량 버튼 두기
     fn player_card(&mut self, ui: &mut egui::Ui) {
         // 위아래와 좌우의 안쪽 여백
-        const TOP: f32 = 12.0;
         const BOTTOM: f32 = 10.0;
         const SIDE: f32 = 16.0;
-        let size = egui::vec2(ui.available_width(), TOP + PLAYER_HEIGHT + BOTTOM);
+        let size = egui::vec2(ui.available_width(), PLAYER_TOP + PLAYER_HEIGHT + BOTTOM);
         let (card, _) = ui.allocate_exact_size(size, egui::Sense::hover());
         let colors = theme::palette(ui);
         let background = glow::Glow::new(card, colors);
@@ -1390,7 +1364,7 @@ impl App {
         ui.painter().add(shape);
 
         let inner = egui::Rect::from_min_max(
-            card.min + egui::vec2(SIDE, TOP),
+            card.min + egui::vec2(SIDE, PLAYER_TOP),
             card.max - egui::vec2(SIDE, BOTTOM),
         );
         let mut content = ui.new_child(egui::UiBuilder::new().max_rect(inner));
