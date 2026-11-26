@@ -162,6 +162,13 @@ struct Drag {
     height: f32,
 }
 
+// 다운로드에 성공한 결과
+struct Saved {
+    files: Vec<PathBuf>,
+    // 같은 이름의 파일이 이미 있어서 받지 않았는지
+    existed: bool,
+}
+
 // 다운로드에 실패했을 때 팝업에 보여줄 내용
 struct Failure {
     reason: String,
@@ -259,7 +266,7 @@ enum Update {
     // 다 받은 뒤 ffmpeg로 처리하는 중
     Processing,
     // 성공하면 받은 파일들의 경로
-    Done(Result<Vec<PathBuf>, String>),
+    Done(Result<Saved, String>),
 }
 
 // 재생에 필요한 값들
@@ -1629,6 +1636,33 @@ impl App {
         self.status = tr!("다운로드 준비 중...", "Preparing download...");
     }
 
+    // 받은 파일은 재생목록 맨 아래에 추가하고, 필요하면 알림으로 알려주기
+    fn finish_download(&mut self, saved: Saved) {
+        let added = self.add_files(saved.files.clone());
+        let message = match (saved.existed, added) {
+            (true, 0) => tr!(
+                "이미 있는 파일이라 받지 않았어요",
+                "Not downloaded: the file already exists",
+            ),
+            (true, _) => tr!(
+                "이미 있는 파일이라 재생목록에만 추가했어요",
+                "The file already exists, so it was only added to the playlist",
+            ),
+            // 새로 받았고 목록에서 바로 보이면 알림은 생략
+            (false, 1..) => return,
+            (false, 0) if saved.files.is_empty() => tr!("저장 완료!", "Saved!"),
+            (false, 0) => tr!(
+                "저장 완료! 이미 재생목록에 있는 파일이에요",
+                "Saved! The file is already in the playlist",
+            ),
+        };
+        self.toast = Some(Toast::new(message));
+        // 목록이 달라지지 않았어도 해당 줄은 보여주기
+        if added == 0 {
+            self.scroll_to = saved.files.into_iter().next();
+        }
+    }
+
     // 다운로드 thread가 보낸 소식 확인하기 (기다리지 않음)
     fn check_download(&mut self) {
         let Some(job) = &mut self.job else {
@@ -1655,8 +1689,8 @@ impl App {
                     };
                 }
                 // 완료는 목록에 표시하고, 실패는 팝업으로 알려주기
-                Ok(Update::Done(Ok(paths))) => {
-                    downloaded = Some(paths);
+                Ok(Update::Done(Ok(saved))) => {
+                    downloaded = Some(saved);
                     break String::new();
                 }
                 Ok(Update::Done(Err(reason))) => {
@@ -1676,20 +1710,8 @@ impl App {
             }
         };
         self.job = None;
-        // 받은 파일은 재생목록 맨 위에 추가
-        if let Some(paths) = downloaded
-            && self.add_files(paths.clone()) == 0
-        {
-            // 목록이 달라지지 않았으면 알림으로 알려주고, 해당 줄 보여주기
-            self.toast = Some(Toast::new(if paths.is_empty() {
-                tr!("저장 완료!", "Saved!")
-            } else {
-                tr!(
-                    "저장 완료! 이미 재생목록에 있는 파일이에요",
-                    "Saved! The file is already in the playlist",
-                )
-            }));
-            self.scroll_to = paths.into_iter().next();
+        if let Some(saved) = downloaded {
+            self.finish_download(saved);
         }
     }
 }
@@ -1845,7 +1867,7 @@ fn download(
     folder: &Path,
     format: Format,
     on_update: impl Fn(Update),
-) -> Result<Vec<PathBuf>, String> {
+) -> Result<Saved, String> {
     //   --print             : 다 만든 파일의 경로를 알려주기
     //   --no-quiet          : --print를 써도 진행 상황 출력은 유지
     //   --no-playlist       : 재생목록 링크여도 영상 하나만 받기
@@ -1895,6 +1917,8 @@ fn download(
     // 일반 출력은 한 줄씩 읽으면서 진행 상황 알리기
     let stdout = child.stdout.take().expect("stdout을 piped로 설정함");
     let mut files = Vec::new();
+    // 이미 있어서 받지 않았다고 알려준 파일들
+    let mut skipped = Vec::new();
     for line in BufReader::new(stdout).split(b'\n') {
         let Ok(line) = line else {
             break;
@@ -1903,6 +1927,8 @@ fn download(
 
         if let Some(path) = line.strip_prefix(FILE_PREFIX) {
             files.push(PathBuf::from(path.trim_end_matches('\r')));
+        } else if let Some(path) = parse_existing(&line) {
+            skipped.push(path);
         } else if let Some(progress) = parse_progress(&line) {
             on_update(Update::Progress(progress));
         } else if ["[ExtractAudio]", "[Merger]", "[VideoRemuxer]"]
@@ -1930,7 +1956,17 @@ fn download(
         return Err(reason);
     }
 
-    Ok(files)
+    // 중간 파일만 남아 있던 경우는 제외하고, 완성된 파일이 이미 있었는지 확인
+    let existed = !files.is_empty() && files.iter().all(|file| skipped.contains(file));
+    Ok(Saved { files, existed })
+}
+
+// "[download] 경로 has already been downloaded" 줄에서 경로 꺼내기
+fn parse_existing(line: &str) -> Option<PathBuf> {
+    line.trim_end_matches('\r')
+        .strip_prefix("[download] ")?
+        .strip_suffix(" has already been downloaded")
+        .map(PathBuf::from)
 }
 
 // Windows에서 yt-dlp를 실행할 때 콘솔 창이 뜨지 않게 하기
@@ -2983,6 +3019,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn reads_existing_file_lines() {
+        let line = "[download] /music/노래 [id].mp3 has already been downloaded\r";
+        assert_eq!(
+            parse_existing(line),
+            Some(PathBuf::from("/music/노래 [id].mp3"))
+        );
+        assert_eq!(parse_existing("[download] Destination: /music/a.mp3"), None);
     }
 
     #[test]
