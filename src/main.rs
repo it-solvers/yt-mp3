@@ -2044,6 +2044,11 @@ impl eframe::App for App {
         };
         storage.set_string("repeat", repeat.to_string());
         storage.set_string("playlist", format_playlist(&self.files));
+        // 이전 version에서 저장했지만 이제 쓰지 않는 값 지우기.
+        // 이전의 순서("order")는 위의 재생목록으로 옮겨졌음
+        for key in OLD_KEYS {
+            storage.remove_string(key);
+        }
         let format = match self.format {
             Format::Mp3 => "mp3",
             Format::Mp4 => "mp4",
@@ -2151,6 +2156,7 @@ fn download(
     format: Format,
     on_update: impl Fn(Update),
 ) -> Result<Saved, String> {
+    //   --ignore-config     : 사용자의 yt-dlp 설정 파일(쿠키 사용 등)은 읽지 않기
     //   --print             : 다 만든 파일의 경로를 알려주기
     //   --no-quiet          : --print를 써도 진행 상황 출력은 유지
     //   --no-playlist       : 재생목록 링크여도 영상 하나만 받기
@@ -2163,6 +2169,7 @@ fn download(
     //   --                  : 이 뒤의 값은 옵션이 아니라고 알려주기
     let mut command = Command::new("yt-dlp");
     command
+        .arg("--ignore-config")
         .args(format_args(format))
         .args(["--no-playlist", "--no-mtime", "--no-quiet", "--progress"])
         .arg("--print")
@@ -2533,6 +2540,9 @@ fn drop_overlay(ui: &egui::Ui) {
         );
     }
 }
+
+// 이전 version에서만 사용하던 저장 항목
+const OLD_KEYS: [&str; 5] = ["order", "new", "shuffle", "auto_next", "agreed"];
 
 // 목록의 줄 사이 간격과, 줄이 비키는 데 걸리는 시간(초)
 const ROW_GAP: f32 = 6.0;
