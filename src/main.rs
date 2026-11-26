@@ -46,6 +46,7 @@ fn main() -> eframe::Result {
         Box::new(|cc| {
             let app = App::new(cc.storage);
             theme::apply(&cc.egui_ctx, app.colors);
+            simplify_app_menu();
             // 저장해 둔 언어에 맞게 창 제목 다시 설정
             cc.egui_ctx
                 .send_viewport_cmd(egui::ViewportCommand::Title(app_name()));
@@ -53,6 +54,42 @@ fn main() -> eframe::Result {
         }),
     )
 }
+
+// Mac 화면 위쪽의 앱 메뉴에는 종료만 남기고, 지금 언어의 앱 이름으로 표시.
+// 처음 메뉴는 창을 만드는 library(winit)가 만들며 마지막 항목이 종료(⌘Q)
+#[cfg(target_os = "macos")]
+fn simplify_app_menu() {
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::{MainThreadMarker, NSString};
+
+    // 메뉴는 main thread에서만 바꿀 수 있음
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    // SAFETY: main thread에서 메뉴의 항목 수 범위 안에서만 읽고 지움
+    unsafe {
+        let Some(menu) = app
+            .mainMenu()
+            .and_then(|bar| bar.itemAtIndex(0))
+            .and_then(|item| item.submenu())
+        else {
+            return;
+        };
+        while menu.numberOfItems() > 1 {
+            menu.removeItemAtIndex(0);
+        }
+        if let Some(quit) = menu.itemAtIndex(0) {
+            let name = app_name();
+            let title = tr!("{name} 종료", "Quit {name}");
+            quit.setTitle(&NSString::from_str(&title));
+        }
+    }
+}
+
+// 다른 운영체제에는 이런 메뉴가 없음
+#[cfg(not(target_os = "macos"))]
+fn simplify_app_menu() {}
 
 // 프로그램에 포함한 앱 아이콘
 fn app_icon() -> egui::IconData {
@@ -766,6 +803,7 @@ impl App {
         }
         self.toast = None;
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(app_name()));
+        simplify_app_menu();
     }
 
     // 재생목록에서 지금은 찾을 수 없는 파일 확인하기

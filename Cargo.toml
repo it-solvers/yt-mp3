@@ -1,6 +1,6 @@
 [package]
 name = "yt-mp3"
-version = "1.0.65"
+version = "1.0.66"
 edition = "2024"
 
 [dependencies]
@@ -17,3 +17,8 @@ trash = "5.4.0"
 # 개발용 build에서도 MIDI 소리가 끊기지 않도록 합성 library는 최적화
 [profile.dev.package.rustysynth]
 opt-level = 3
+
+# Mac 메뉴 막대를 정리할 때 사용 (창을 만드는 library가 이미 쓰는 version)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.2.2", features = ["NSApplication", "NSMenu", "NSMenuItem", "NSResponder"] }
+objc2-foundation = { version = "0.2.2", features = ["NSString"] }
