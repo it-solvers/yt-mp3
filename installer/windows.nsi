@@ -17,6 +17,9 @@ Unicode true
 !define OLD_NAME_SHORT_KO "걍담아"
 !define PUBLISHER "ITSolvers(Hyeok Lee)"
 !define PUBLISHER_KO "아이티해결단(이혁)"
+; 저작권자 표시
+!define COPYRIGHT "ITSolvers"
+!define COPYRIGHT_KO "아이티해결단"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\yt-mp3"
 
 OutFile "${OUTFILE}"
@@ -48,16 +51,16 @@ Name "$(APPNAME)"
 
 ; 설치 파일의 "속성 > 자세히"에 보이는 정보 (언어 설정 뒤에 와야 함)
 VIProductVersion "${VERSION}.0"
-!macro VersionInfo LANG PRODUCT DESCRIPTION COMPANY
+!macro VersionInfo LANG PRODUCT DESCRIPTION COMPANY HOLDER
     VIAddVersionKey /LANG=${LANG} "ProductName" "${PRODUCT}"
     VIAddVersionKey /LANG=${LANG} "ProductVersion" "${VERSION}"
     VIAddVersionKey /LANG=${LANG} "FileVersion" "${VERSION}"
     VIAddVersionKey /LANG=${LANG} "FileDescription" "${DESCRIPTION}"
     VIAddVersionKey /LANG=${LANG} "CompanyName" "${COMPANY}"
-    VIAddVersionKey /LANG=${LANG} "LegalCopyright" "${COMPANY}"
+    VIAddVersionKey /LANG=${LANG} "LegalCopyright" "${HOLDER}"
 !macroend
-!insertmacro VersionInfo ${LANG_ENGLISH} "${NAME}" "${NAME} Setup" "${PUBLISHER}"
-!insertmacro VersionInfo ${LANG_KOREAN} "${NAME_KO}" "${NAME_KO} 설치 파일" "${PUBLISHER_KO}"
+!insertmacro VersionInfo ${LANG_ENGLISH} "${NAME}" "${NAME} Setup" "${PUBLISHER}" "${COPYRIGHT}"
+!insertmacro VersionInfo ${LANG_KOREAN} "${NAME_KO}" "${NAME_KO} 설치 파일" "${PUBLISHER_KO}" "${COPYRIGHT_KO}"
 
 ; 이 설치 파일이 설치한 파일만 하나씩 삭제 (사용자가 넣은 파일은 남김)
 !macro RemoveFiles DIR

@@ -67,8 +67,8 @@ fn app_name() -> String {
 // 정보창에 보여줄 저작권 정보
 fn copyright() -> String {
     tr!(
-        "© 2026 아이티해결단(이혁). All rights reserved.",
-        "© 2026 ITSolvers(Hyeok Lee). All rights reserved.",
+        "© 2026 아이티해결단. All rights reserved.",
+        "© 2026 ITSolvers. All rights reserved.",
     )
 }
 
