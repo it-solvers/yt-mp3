@@ -773,11 +773,26 @@ impl App {
         added.len()
     }
 
-    // 창에 끌어다 놓은 파일과 폴더를 재생목록에 추가하기
+    // 창에 끌어다 놓은 파일과 폴더를 재생목록에 추가하기.
+    // 재생할 수 없는 소리 파일은 추가하지 않음
     fn add_dropped(&mut self, dropped: &[PathBuf]) {
         let found = collect_media(dropped);
         let total = found.len();
-        if self.add_files(found) > 0 {
+        let known: HashSet<&PathBuf> = self.files.iter().collect();
+        let (playable, rejected): (Vec<PathBuf>, Vec<PathBuf>) = found
+            .into_iter()
+            .filter(|path| !known.contains(path))
+            .partition(|path| can_play(path));
+        let added = self.add_files(playable);
+        if !rejected.is_empty() {
+            let count = rejected.len();
+            self.toast = Some(Toast::new(tr!(
+                "재생할 수 없는 파일 {count}개는 추가하지 않았어요",
+                "Not added: {count} file(s) that cannot be played",
+            )));
+            return;
+        }
+        if added > 0 {
             // 목록에서 바로 보이므로 알림은 생략
             return;
         }
@@ -810,19 +825,21 @@ impl App {
         }
     }
 
-    // 선택한 파일 재생하기 (이전에 재생하던 곡은 자동으로 멈춤)
+    // 선택한 파일 재생하고, 재생할 수 없으면 알려주기
     fn play(&mut self, path: PathBuf) {
+        if let Err(message) = self.start(path) {
+            self.toast = Some(Toast::new(tr!("오류: {message}", "Error: {message}")));
+        }
+    }
+
+    // 파일 재생 시작하기 (이전에 재생하던 곡은 자동으로 멈춤)
+    fn start(&mut self, path: PathBuf) -> Result<(), String> {
         self.new_files.remove(&path);
         self.playing = None;
-        match start_playing(path) {
-            Ok(playing) => {
-                playing.player.set_volume(self.volume);
-                self.playing = Some(playing);
-            }
-            Err(message) => {
-                self.toast = Some(Toast::new(tr!("오류: {message}", "Error: {message}")))
-            }
-        }
+        let playing = start_playing(path)?;
+        playing.player.set_volume(self.volume);
+        self.playing = Some(playing);
+        Ok(())
     }
 
     // 동영상은 PC의 기본 player로 열기
@@ -881,13 +898,35 @@ impl App {
             .collect()
     }
 
+    // current의 앞뒤 곡을 고를 때 쓰는 목록. 재생하지 못한 곡(skipped)은 빼고,
+    // current는 그 사이에 지워졌어도 위치를 알 수 있게 남겨 둠
+    fn songs_around(&self, current: &Path, skipped: &HashSet<PathBuf>) -> Vec<PathBuf> {
+        self.files
+            .iter()
+            .filter(|path| {
+                *path == current
+                    || (!is_video(path)
+                        && !self.missing.contains(*path)
+                        && !skipped.contains(*path))
+            })
+            .cloned()
+            .collect()
+    }
+
     // current 다음에 재생할 곡. wrap이면 끝까지 간 뒤 처음부터 다시
-    fn next_song(&mut self, current: &Path, wrap: bool) -> Option<PathBuf> {
-        let songs = self.songs();
+    fn next_song(
+        &mut self,
+        current: &Path,
+        wrap: bool,
+        skipped: &HashSet<PathBuf>,
+    ) -> Option<PathBuf> {
+        let mut songs = self.songs_around(current, skipped);
         if !self.shuffle {
             return step_song(&songs, current, true, wrap);
         }
 
+        // 섞기에서는 위치가 필요 없으므로 지워진 곡은 빼기
+        songs.retain(|path| !self.missing.contains(path));
         self.history.push(current.to_path_buf());
         // 이전 곡으로 돌아왔었다면 지나갔던 순서대로 다시 앞으로
         if let Some(path) = pop_existing(&mut self.upcoming, &songs) {
@@ -905,6 +944,37 @@ impl App {
         fastrand::choice(candidates)
     }
 
+    // current 다음 곡 재생하기. 재생할 수 없는 곡은 건너뜀
+    fn play_next(&mut self, current: PathBuf, wrap: bool) {
+        let mut skipped = HashSet::new();
+        let mut from = current;
+        while let Some(path) = self.next_song(&from, wrap, &skipped) {
+            // 이미 실패한 곡만 남았으면 그만
+            if skipped.contains(&path) || self.start(path.clone()).is_ok() {
+                break;
+            }
+            skipped.insert(path.clone());
+            from = path;
+        }
+        self.report_skipped(&skipped);
+    }
+
+    // 건너뛴 곡이 있으면 알려주기
+    fn report_skipped(&mut self, skipped: &HashSet<PathBuf>) {
+        if skipped.is_empty() {
+            return;
+        }
+        // 재생하지 못한 곡으로는 되돌아가지 않기
+        self.history.retain(|path| !skipped.contains(path));
+        // 지워진 파일은 목록에 표시
+        self.check_missing();
+        let count = skipped.len();
+        self.toast = Some(Toast::new(tr!(
+            "재생할 수 없는 파일 {count}개를 건너뛰었어요",
+            "Skipped {count} file(s) that cannot be played",
+        )));
+    }
+
     // 이전 곡 버튼: 조금이라도 들었으면 처음부터, 곡의 시작 부분이면 이전 곡
     fn previous(&mut self) {
         let Some(playing) = &self.playing else {
@@ -917,18 +987,30 @@ impl App {
         }
 
         let current = playing.path.clone();
-        let previous = if self.shuffle {
-            // 지나온 곡 중에서 지금도 있는 가장 최근 곡
-            let songs = self.songs();
-            let previous = pop_existing(&mut self.history, &songs);
-            if previous.is_some() {
-                self.upcoming.push(current.clone());
+        let mut skipped = HashSet::new();
+        let mut from = current.clone();
+        loop {
+            let songs = self.songs_around(&from, &skipped);
+            let previous = if self.shuffle {
+                // 지나온 곡 중에서 지금도 있는 가장 최근 곡
+                pop_existing(&mut self.history, &songs)
+            } else {
+                step_song(&songs, &from, false, true)
+            };
+            let Some(path) = previous.filter(|path| !skipped.contains(path)) else {
+                self.play(current);
+                break;
+            };
+            if self.start(path.clone()).is_ok() {
+                if self.shuffle {
+                    self.upcoming.push(current);
+                }
+                break;
             }
-            previous
-        } else {
-            step_song(&self.songs(), &current, false, true)
-        };
-        self.play(previous.unwrap_or(current));
+            skipped.insert(path.clone());
+            from = path;
+        }
+        self.report_skipped(&skipped);
     }
 
     // 다음 곡 버튼
@@ -936,9 +1018,7 @@ impl App {
         let Some(current) = self.playing.as_ref().map(|p| p.path.clone()) else {
             return;
         };
-        if let Some(path) = self.next_song(&current, true) {
-            self.play(path);
-        }
+        self.play_next(current, true);
     }
 
     // 곡이 끝까지 재생됐으면 정리하고, 반복 설정에 따라 다음 곡 재생하기
@@ -953,14 +1033,11 @@ impl App {
         let finished = playing.path.clone();
         self.playing = None;
 
-        let next = match self.repeat {
-            Repeat::One => Some(finished),
+        match self.repeat {
+            Repeat::One => self.play(finished),
             // 전체 반복은 마지막 곡 다음에 처음부터, 반복을 끄면 마지막 곡에서 멈춤
-            Repeat::All => self.next_song(&finished, true),
-            Repeat::Off => self.next_song(&finished, false),
-        };
-        if let Some(path) = next {
-            self.play(path);
+            Repeat::All => self.play_next(finished, true),
+            Repeat::Off => self.play_next(finished, false),
         }
     }
 
@@ -2834,6 +2911,18 @@ fn move_to_trash(path: &Path) -> Result<(), trash::Error> {
     }
 
     context.delete(path)
+}
+
+// 재생목록에 넣을 수 있는 파일인지. 소리 파일은 열어서 읽을 수 있는지 확인
+// (동영상은 PC의 기본 player로 열므로 확인하지 않음)
+fn can_play(path: &Path) -> bool {
+    if is_video(path) {
+        return true;
+    }
+    if has_extension(path, "mid") || has_extension(path, "midi") {
+        return midi::can_read(path);
+    }
+    File::open(path).is_ok_and(|file| Decoder::try_from(file).is_ok())
 }
 
 // 소리 출력 장치를 열고 파일 재생 시작하기

@@ -33,6 +33,11 @@ pub struct MidiSource {
     next: usize,
 }
 
+// 읽을 수 있는 MIDI 파일인지 확인 (음색 파일은 읽지 않으므로 빠름)
+pub fn can_read(path: &Path) -> bool {
+    File::open(path).is_ok_and(|file| MidiFile::new(&mut BufReader::new(file)).is_ok())
+}
+
 impl MidiSource {
     pub fn open(path: &Path) -> Result<Self, String> {
         let font = soundfont()?;
