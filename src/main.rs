@@ -510,6 +510,8 @@ impl App {
                 }
             }
         };
+        // 켤 때 이미 없어진 파일은 재생목록에서 빼기
+        app.files.retain(|path| !is_deleted(path));
         app.check_missing();
         app
     }
@@ -2904,6 +2906,30 @@ fn parse_playlist(text: &str) -> Vec<PathBuf> {
         .collect()
 }
 
+// 파일이 지워졌거나 옮겨져서 없는지. 파일이 있는 외장 디스크나 network 드라이브가
+// 연결되지 않은 경우와, 권한 문제처럼 확인할 수 없는 경우는 없어진 것으로 보지 않음
+fn is_deleted(path: &Path) -> bool {
+    let not_found = fs::metadata(path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
+    not_found && drive_of(path).is_none_or(|drive| drive.exists())
+}
+
+// 파일이 따로 연결하는 디스크에 있으면 그 디스크의 위치.
+// Windows는 "D:\" 같은 드라이브, Mac은 "/Volumes/이름"
+fn drive_of(path: &Path) -> Option<PathBuf> {
+    let mut parts = path.components();
+    match parts.next()? {
+        std::path::Component::Prefix(prefix) => {
+            let mut drive = prefix.as_os_str().to_os_string();
+            drive.push(std::path::MAIN_SEPARATOR_STR);
+            Some(PathBuf::from(drive))
+        }
+        _ => {
+            let name = path.strip_prefix("/Volumes").ok()?.components().next()?;
+            Some(Path::new("/Volumes").join(name))
+        }
+    }
+}
+
 // 목록에 없는 파일만 순서대로 맨 뒤에 넣고, 넣은 파일들을 돌려주기
 fn add_to_end(files: &mut Vec<PathBuf>, paths: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut known: HashSet<PathBuf> = files.iter().cloned().collect();
@@ -3384,6 +3410,20 @@ mod tests {
         assert_eq!(offset(3.0), 0.0);
         assert_eq!(offset(4.0), 40.0);
         assert_eq!(offset(6.0), 20.0);
+    }
+
+    #[test]
+    fn finds_deleted_files() {
+        let folder = std::env::temp_dir();
+        assert!(is_deleted(&folder.join("yt-mp3-no-such-file.mp3")));
+        assert!(!is_deleted(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("Cargo.toml")
+                .as_path()
+        ));
+        // 연결되지 않은 외장 디스크의 파일은 남겨 둠
+        #[cfg(target_os = "macos")]
+        assert!(!is_deleted(Path::new("/Volumes/yt-mp3-no-such-disk/a.mp3")));
     }
 
     #[test]
