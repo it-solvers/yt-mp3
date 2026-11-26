@@ -128,6 +128,29 @@ fn notices(ui: &mut egui::Ui) {
     );
 }
 
+// 선택하면 강조색으로 채워지는 선택 상자
+fn check_box(ui: &mut egui::Ui, checked: &mut bool, label: String) {
+    let colors = theme::palette(ui);
+    let text = egui::RichText::new(label).color(ui.visuals().strong_text_color());
+    let on = *checked;
+    ui.scope(|ui| {
+        let widgets = &mut ui.visuals_mut().widgets;
+        for widget in [
+            &mut widgets.inactive,
+            &mut widgets.hovered,
+            &mut widgets.active,
+        ] {
+            widget.bg_stroke = egui::Stroke::new(1.5, colors.veil(0.45));
+            if on {
+                widget.bg_fill = colors.point;
+                widget.bg_stroke.color = colors.point;
+                widget.fg_stroke.color = colors.on_point;
+            }
+        }
+        ui.checkbox(checked, text);
+    });
+}
+
 // 안내 글 상자. parts의 홀수 번째(1, 3, ...) 글이 강조할 부분
 fn notice_box<const N: usize>(ui: &mut egui::Ui, parts: [String; N]) {
     let colors = theme::palette(ui);
@@ -266,8 +289,10 @@ struct App {
     choosing_colors: bool,
     // 프로그램 정보 팝업이 열려 있는지
     showing_about: bool,
-    // 저작권 안내에 동의했는지. 동의하기 전에는 저장하기 전에 먼저 물어봄
-    agreed: bool,
+    // 저작권 안내를 다시 보지 않기로 했는지. 아니면 저장할 때마다 먼저 보여줌
+    hide_notice: bool,
+    // 열려 있는 안내 팝업의 "다시 보지 않기" 선택
+    hide_notice_checked: bool,
     // 저작권 안내 동의 팝업이 열려 있는지
     asking_consent: bool,
     // 다운로드 중이면 Some, 아니면 None
@@ -432,7 +457,8 @@ impl App {
             upcoming: Vec::new(),
             format,
             language_chosen,
-            agreed: saved("agreed").as_deref() == Some("true"),
+            hide_notice: saved("hide_notice").as_deref() == Some("true"),
+            hide_notice_checked: false,
             asking_consent: false,
             icon_texture: None,
         };
@@ -534,24 +560,37 @@ impl App {
         });
     }
 
-    // 처음 저장하기 전에 저작권 안내를 보여주고 동의받는 팝업
+    // 저장하기 전에 저작권 안내를 보여주고 동의받는 팝업
     fn consent_dialog(&mut self, ui: &mut egui::Ui) {
         if !self.asking_consent {
             return;
         }
         let title = tr!("저장하기 전에 확인해 주세요", "Please read before saving");
+        let mut checked = self.hide_notice_checked;
         let mut agreed = false;
         let closed = dialog(ui, "consent", &title, notices, |ui| {
-            let colors = theme::palette(ui);
-            let label = tr!("동의하고 저장", "Agree and save");
-            let text = egui::RichText::new(label).strong().color(colors.on_point);
-            let button = egui::Button::new(text)
-                .fill(colors.point)
-                .min_size(egui::vec2(0.0, 30.0));
-            agreed = ui.add(button).clicked();
+            // 왼쪽에 "다시 보지 않기", 오른쪽에 동의 버튼
+            let row = egui::vec2(ui.available_width(), 30.0);
+            let right_to_left = egui::Layout::right_to_left(egui::Align::Center);
+            ui.allocate_ui_with_layout(row, right_to_left, |ui| {
+                let colors = theme::palette(ui);
+                let label = tr!("동의하고 저장", "Agree and save");
+                let text = egui::RichText::new(label).strong().color(colors.on_point);
+                let button = egui::Button::new(text)
+                    .fill(colors.point)
+                    .min_size(egui::vec2(0.0, 30.0));
+                agreed = ui.add(button).clicked();
+
+                let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
+                ui.with_layout(left_to_right, |ui| {
+                    check_box(ui, &mut checked, tr!("다시 보지 않기", "Don't show again"));
+                });
+            });
         });
+        self.hide_notice_checked = checked;
         if agreed {
-            self.agreed = true;
+            // 선택은 동의했을 때만 기억
+            self.hide_notice = checked;
             self.asking_consent = false;
             self.start_download(ui.ctx().clone());
         } else if closed {
@@ -1791,12 +1830,13 @@ impl App {
         }
     }
 
-    // 저장하기를 눌렀을 때. 안내에 동의한 적이 없으면 먼저 물어봄
+    // 저장하기를 눌렀을 때. 안내를 다시 보지 않기로 하지 않았으면 먼저 보여줌
     fn request_download(&mut self, ctx: egui::Context) {
-        if self.agreed {
+        if self.hide_notice {
             self.start_download(ctx);
         } else {
             self.asking_consent = true;
+            self.hide_notice_checked = false;
         }
     }
 
@@ -1962,7 +2002,7 @@ impl eframe::App for App {
             Format::Mp4 => "mp4",
         };
         storage.set_string("format", format.to_string());
-        storage.set_string("agreed", self.agreed.to_string());
+        storage.set_string("hide_notice", self.hide_notice.to_string());
         if self.language_chosen {
             let language = if lang::is_korean() { "ko" } else { "en" };
             storage.set_string("language", language.to_string());
