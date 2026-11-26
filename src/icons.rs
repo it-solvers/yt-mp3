@@ -38,7 +38,16 @@ pub enum Icon {
 
 // 아이콘 하나가 들어가는 버튼. label은 마우스를 올렸을 때 보여줄 설명
 pub fn button(ui: &mut Ui, icon: Icon, label: String) -> Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
+    sized_button(ui, icon, label, 28.0)
+}
+
+// 제목 줄에 쓰는 조금 큰 버튼
+pub fn title_button(ui: &mut Ui, icon: Icon, label: String) -> Response {
+    sized_button(ui, icon, label, 30.0)
+}
+
+fn sized_button(ui: &mut Ui, icon: Icon, label: String, side: f32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(side), Sense::click());
     describe(&response, ui, &label);
 
     if ui.is_rect_visible(rect) {

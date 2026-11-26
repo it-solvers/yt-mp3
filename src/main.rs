@@ -473,7 +473,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(app_name()).heading().strong());
 
-            if icons::button(ui, Icon::Info, tr!("프로그램 정보", "About")).clicked() {
+            if icons::title_button(ui, Icon::Info, tr!("프로그램 정보", "About")).clicked() {
                 self.showing_about = true;
             }
 
@@ -486,11 +486,11 @@ impl App {
                 } else {
                     "한국어로 바꾸기"
                 };
-                if icons::button(ui, Icon::Globe, hint.to_string()).clicked() {
+                if icons::title_button(ui, Icon::Globe, hint.to_string()).clicked() {
                     self.set_language(ui.ctx(), !korean);
                 }
                 let colors = tr!("화면 색상", "Colors");
-                if icons::button(ui, Icon::Palette, colors).clicked() {
+                if icons::title_button(ui, Icon::Palette, colors).clicked() {
                     self.choosing_colors = true;
                 }
             });
@@ -2000,7 +2000,8 @@ impl eframe::App for App {
         }
 
         egui::Panel::top("title")
-            .frame(edge_frame(ui))
+            // 제목 줄이 답답하지 않게 여백 두기
+            .frame(edge_frame(ui).inner_margin(egui::Margin::symmetric(12, 8)))
             .show(ui, |ui| self.title_bar(ui));
 
         // 아래쪽 영역은 나중에 배치한 것이 위에 놓임.
