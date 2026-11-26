@@ -72,9 +72,6 @@ fn copyright() -> String {
     )
 }
 
-// 지원 사이트 안내창의 내용. 다운로드를 확인한 사이트만 적기
-const SITES: &str = "YouTube, Instagram, TikTok, X, Facebook, SoundCloud";
-
 // 팝업 안의 항목 제목
 fn section_title(ui: &mut egui::Ui, text: String) {
     let color = ui.visuals().hyperlink_color;
@@ -193,27 +190,6 @@ fn notice_box<const N: usize>(ui: &mut egui::Ui, parts: [String; N]) {
         });
 }
 
-// 지원 사이트 목록. notes가 true면 주의할 점도 함께 보여줌
-fn supported_sites(ui: &mut egui::Ui, notes: bool) {
-    let strong = ui.visuals().strong_text_color();
-
-    section_title(ui, tr!("지원 사이트", "Supported sites"));
-    ui.label(egui::RichText::new(SITES).color(strong));
-    if notes {
-        ui.label(
-            egui::RichText::new(tr!(
-                "• SoundCloud는 소리만 받을 수 있어요\n\
-                 • 게시물에 따라 받지 못할 수 있어요\n\
-                 • 로그인, 비공개, DRM 콘텐츠는 안 돼요",
-                "• SoundCloud provides audio only\n\
-                 • Some posts may fail to download\n\
-                 • No login-only, private, or DRM content",
-            ))
-            .color(strong),
-        );
-    }
-}
-
 // 새로 추가한 줄의 깜빡임
 struct Blink {
     paths: HashSet<PathBuf>,
@@ -282,13 +258,6 @@ struct Saved {
     existed: bool,
 }
 
-// 다운로드에 실패했을 때 팝업에 보여줄 내용
-struct Failure {
-    reason: String,
-    // 오류 내용을 복사했는지
-    copied: bool,
-}
-
 // 재생 영역의 내용 높이 (제목 20 + 곡 정보 28 + 재생 버튼 52 + 탐색 bar 18 + 간격)
 const PLAYER_HEIGHT: f32 = 127.0;
 
@@ -299,8 +268,8 @@ struct App {
     status: String,
     // 결과나 오류를 알리는 알림이 떠 있으면 Some
     toast: Option<Toast>,
-    // 다운로드 실패 팝업이 열려 있으면 Some
-    failure: Option<Failure>,
+    // 다운로드 실패 팝업이 열려 있는지
+    showing_failure: bool,
     // 고른 화면 색
     colors: theme::Choice,
     // 색상 선택 팝업이 열려 있는지
@@ -446,7 +415,7 @@ impl App {
             // 보여줄 안내가 생기기 전까지는 비워 두기
             status: String::new(),
             toast: None,
-            failure: None,
+            showing_failure: false,
             colors: theme::Choice {
                 preset: saved("color_preset")
                     .and_then(|v| v.parse().ok())
@@ -540,7 +509,7 @@ impl App {
         }
     }
 
-    // 정보 팝업의 내용: 아이콘, 이름, version, 지원 사이트, 안내, 저작권, 오픈소스 license
+    // 정보 팝업의 내용: 아이콘, 이름, version, 안내, 저작권, 오픈소스 license
     fn about(&mut self, ui: &mut egui::Ui) {
         let texture = self.icon_texture.get_or_insert_with(|| {
             let icon = app_icon();
@@ -567,8 +536,6 @@ impl App {
             ui.label(egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).weak());
             ui.separator();
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                supported_sites(ui, true);
-                ui.separator();
                 copyright_notice(ui);
                 self.agreement_state(ui);
                 ui.separator();
@@ -697,52 +664,20 @@ impl App {
         }
     }
 
-    // 다운로드 실패 팝업: 오류 내용과 지원 사이트
+    // 다운로드 실패 팝업
     fn failure_dialog(&mut self, ui: &mut egui::Ui) {
-        let Some(failure) = &mut self.failure else {
+        if !self.showing_failure {
             return;
-        };
+        }
         let title = tr!("다운로드에 실패했어요", "Download failed");
-        // 본문과 아래 버튼이 함께 쓰는 값
-        let reason = failure.reason.clone();
-        let closed = dialog(
-            ui,
-            "failure",
-            &title,
-            |ui| {
-                // 긴 오류는 작은 영역 안에서 스크롤
-                egui::Frame::new()
-                    .fill(theme::palette(ui).shade(0.14))
-                    .corner_radius(8)
-                    .inner_margin(8)
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        egui::ScrollArea::vertical()
-                            .id_salt("reason")
-                            .max_height(80.0)
-                            .show(ui, |ui| {
-                                let text = egui::RichText::new(&reason).monospace().size(11.0);
-                                ui.add(egui::Label::new(text).wrap());
-                            });
-                    });
-
-                ui.separator();
-                supported_sites(ui, false);
-            },
-            |ui| {
-                let copy = if failure.copied {
-                    tr!("복사했어요", "Copied")
-                } else {
-                    tr!("오류 내용 복사", "Copy error")
-                };
-                if ui.button(copy).clicked() {
-                    ui.ctx().copy_text(failure.reason.clone());
-                    failure.copied = true;
-                }
-            },
-        );
-        if closed {
-            self.failure = None;
+        let body = |ui: &mut egui::Ui| {
+            ui.label(tr!(
+                "이 주소의 콘텐츠는 저장할 수 없어요",
+                "The content at this address cannot be saved",
+            ));
+        };
+        if dialog(ui, "failure", &title, body, |_| {}) {
+            self.showing_failure = false;
         }
     }
 
@@ -914,7 +849,7 @@ impl App {
     // 선택한 파일 재생하고, 재생할 수 없으면 알려주기
     fn play(&mut self, path: PathBuf) {
         if let Err(message) = self.start(path) {
-            self.toast = Some(Toast::new(tr!("오류: {message}", "Error: {message}")));
+            self.toast = Some(Toast::new(message));
         }
     }
 
@@ -935,9 +870,10 @@ impl App {
             playing.player.pause();
         }
         if let Err(e) = open::that_detached(path) {
+            eprintln!("cannot open the video: {e}");
             self.toast = Some(Toast::new(tr!(
-                "오류: 동영상을 열 수 없어요: {e}",
-                "Error: cannot open the video: {e}"
+                "동영상을 열 수 없어요",
+                "Cannot open the video"
             )));
         }
     }
@@ -1333,10 +1269,8 @@ impl App {
                     // 마우스를 놓았을 때 한 번만 이동하기
                     playing.seeking = None;
                     if let Err(e) = playing.player.try_seek(Duration::from_secs_f32(bar)) {
-                        self.toast = Some(Toast::new(tr!(
-                            "오류: 이동할 수 없어요: {e}",
-                            "Error: cannot seek: {e}"
-                        )));
+                        eprintln!("cannot seek: {e}");
+                        self.toast = Some(Toast::new(tr!("이동할 수 없어요", "Cannot seek")));
                     }
                 }
             });
@@ -1349,27 +1283,16 @@ impl App {
         #[cfg(debug_assertions)]
         let found = notices_path().map_or_else(make_dev_notices, Ok);
         #[cfg(not(debug_assertions))]
-        let found = notices_path().ok_or_else(|| {
-            tr!(
-                "라이선스 문서를 찾을 수 없어요",
-                "the license document was not found",
-            )
-        });
+        let found = notices_path().ok_or("the license document was not found");
 
-        let path = match found {
-            Ok(path) => path,
-            Err(e) => {
-                self.toast = Some(Toast::new(tr!(
-                    "오류: 라이선스 문서를 열 수 없어요: {e}",
-                    "Error: cannot open the license document: {e}",
-                )));
-                return;
-            }
-        };
-        if let Err(e) = open::that_detached(path) {
+        let opened = found
+            .map_err(|e| e.to_string())
+            .and_then(|path| open::that_detached(path).map_err(|e| e.to_string()));
+        if let Err(e) = opened {
+            eprintln!("cannot open the license document: {e}");
             self.toast = Some(Toast::new(tr!(
-                "오류: 라이선스 문서를 열 수 없어요: {e}",
-                "Error: cannot open the license document: {e}",
+                "라이선스 문서를 열 수 없어요",
+                "Cannot open the license document",
             )));
         }
     }
@@ -1461,7 +1384,7 @@ impl App {
 
         let mut removed = Vec::new();
         let mut moved = Vec::new();
-        let mut errors = Vec::new();
+        let mut failed = 0;
         for path in paths {
             // 지우려는 곡이 재생 중이면 먼저 정지 (Windows는 열린 파일을 옮길 수 없음)
             if self.playing.as_ref().is_some_and(|p| p.path == path) {
@@ -1477,15 +1400,17 @@ impl App {
                     moved.push(file_name(&path));
                     removed.push(path);
                 }
-                Err(e) => errors.push(e.to_string()),
+                Err(e) => {
+                    eprintln!("cannot move to trash: {e}");
+                    failed += 1;
+                }
             }
         }
 
-        let message = if let Some(e) = errors.first() {
-            let count = errors.len();
+        let message = if failed > 0 {
             tr!(
-                "오류: {count}개를 삭제할 수 없어요: {e}",
-                "Error: cannot delete {count} file(s): {e}",
+                "{failed}개를 삭제할 수 없어요",
+                "Cannot delete {failed} file(s)",
             )
         } else if let [name] = moved.as_slice() {
             tr!("휴지통으로 옮겼어요: {name}", "Moved to trash: {name}")
@@ -1972,18 +1897,14 @@ impl App {
                     break String::new();
                 }
                 Ok(Update::Done(Err(reason))) => {
-                    self.failure = Some(Failure {
-                        reason,
-                        copied: false,
-                    });
+                    // 원인은 어려운 영어라서 화면에는 보여주지 않고 터미널에만 남기기
+                    eprintln!("download failed: {reason}");
+                    self.showing_failure = true;
                     break String::new();
                 }
                 Err(TryRecvError::Empty) => return, // 아직 진행 중
                 Err(TryRecvError::Disconnected) => {
-                    break tr!(
-                        "오류: 작업이 중단됐어요",
-                        "Error: the task stopped unexpectedly"
-                    );
+                    break tr!("작업이 중단됐어요", "The task stopped unexpectedly");
                 }
             }
         };
@@ -3028,10 +2949,8 @@ fn can_play(path: &Path) -> bool {
 // 소리 출력 장치를 열고 파일 재생 시작하기
 fn start_playing(path: PathBuf) -> Result<Playing, String> {
     let cannot_play = |e: String| {
-        tr!(
-            "재생할 수 없는 파일이에요: {e}",
-            "cannot play this file: {e}"
-        )
+        eprintln!("cannot play this file: {e}");
+        tr!("재생할 수 없는 파일이에요", "Cannot play this file")
     };
 
     // MIDI는 소리를 만들어 가며 재생하고, 나머지는 파일의 소리를 풀어서 재생
@@ -3039,8 +2958,10 @@ fn start_playing(path: PathBuf) -> Result<Playing, String> {
         let source = midi::MidiSource::open(&path).map_err(cannot_play)?;
         return play_source(path, source);
     }
-    let file = File::open(&path)
-        .map_err(|e| tr!("파일을 열 수 없어요: {e}", "cannot open the file: {e}"))?;
+    let file = File::open(&path).map_err(|e| {
+        eprintln!("cannot open the file: {e}");
+        tr!("파일을 열 수 없어요", "Cannot open the file")
+    })?;
     let source = Decoder::try_from(file).map_err(|e| cannot_play(e.to_string()))?;
     play_source(path, source)
 }
@@ -3049,9 +2970,10 @@ fn play_source(path: PathBuf, source: impl Source + Send + 'static) -> Result<Pl
     let total = source.total_duration();
 
     let mut device = DeviceSinkBuilder::open_default_sink().map_err(|e| {
+        eprintln!("cannot open the audio output: {e}");
         tr!(
-            "소리 출력 장치를 열 수 없어요: {e}",
-            "cannot open the audio output: {e}",
+            "소리 출력 장치를 열 수 없어요",
+            "Cannot open the audio output",
         )
     })?;
     // 정지할 때 터미널에 안내 문구가 나오지 않도록 끄기
